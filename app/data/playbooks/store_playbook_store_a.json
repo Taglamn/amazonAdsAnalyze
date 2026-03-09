@@ -1,0 +1,10 @@
+{
+  "store_id": "store_a",
+  "rules": {
+    "negative_search_terms": "Conservative Negative Search Terms",
+    "acos_limit": 45,
+    "bid_step_up_pct": 8,
+    "bid_step_down_pct": 12,
+    "focus": "Protect branded exact while pruning broad waste"
+  }
+}

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>亚马逊广告多店铺管理看板 | Amazon Ads Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              brand: {
+                50: '#eff6ff',
+                100: '#dbeafe',
+                200: '#bfdbfe',
+                300: '#93c5fd',
+                400: '#60a5fa',
+                500: '#3b82f6',
+                600: '#2563eb',
+                700: '#1d4ed8',
+                800: '#1e40af',
+                900: '#1e3a8a'
+              }
+            }
+          }
+        }
+      }
+    </script>
+  </head>
+  <body class="bg-gradient-to-br from-brand-50 via-white to-brand-100 text-brand-900">
+    <div id="root"></div>
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>

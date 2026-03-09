@@ -1,0 +1,10 @@
+{
+  "store_id": "store_b",
+  "rules": {
+    "negative_search_terms": "Balanced Negative Search Terms",
+    "acos_limit": 40,
+    "bid_step_up_pct": 6,
+    "bid_step_down_pct": 10,
+    "focus": "Stabilize ACoS drift and keep conversion density"
+  }
+}
