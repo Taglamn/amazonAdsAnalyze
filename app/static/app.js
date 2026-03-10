@@ -58,6 +58,7 @@ const I18N = {
       syncDateHint: 'Leave both empty for default recent 14 days.',
       syncDateInvalid: 'Please set both start and end dates, and ensure start <= end.',
       syncCurrentStoreOnly: 'Only the currently selected store will be synced.',
+      contextExportBtn: 'Download Context Package',
       uploadBtn: 'Upload & Analyze File',
       uploadLabel: 'Ad Group Excel File',
       uploadHint: 'Upload an Excel file with two sheets: daily ad data + operation history.',
@@ -101,6 +102,15 @@ const I18N = {
       syncTableEmpty: 'No ad groups with spend in the selected period.',
       sortAsc: 'Ascending',
       sortDesc: 'Descending',
+      contextStoreHint: 'Context Package supports Lingxing stores only (store_id should start with lingxing_).',
+      contextJobLabel: 'Context Package Export Task',
+      contextJobIdle: 'No context export task is running.',
+      contextJobQueued: 'Task queued, waiting for execution.',
+      contextJobRunning: 'Task is running...',
+      contextJobDone: 'Task finished. Download started.',
+      contextJobFailed: 'Context export failed.',
+      contextJobProgress: 'Progress',
+      contextJobStage: 'Stage',
     },
   },
   zh: {
@@ -154,6 +164,7 @@ const I18N = {
       syncDateHint: '开始和结束都留空时，默认同步最近 14 天。',
       syncDateInvalid: '请同时填写开始/结束日期，并确保开始日期不晚于结束日期。',
       syncCurrentStoreOnly: '仅同步当前已选店铺的数据。',
+      contextExportBtn: '下载 Context Package',
       uploadBtn: '上传文档并分析',
       uploadLabel: '广告组 Excel 文件',
       uploadHint: '请上传包含两个 sheet 的 Excel：广告日数据 + 操作历史。',
@@ -197,6 +208,15 @@ const I18N = {
       syncTableEmpty: '所选周期内没有消耗金额大于 0 的广告组。',
       sortAsc: '升序',
       sortDesc: '降序',
+      contextStoreHint: 'Context Package 仅支持领星店铺（store_id 需以 lingxing_ 开头）。',
+      contextJobLabel: 'Context Package 导出任务',
+      contextJobIdle: '当前没有进行中的导出任务。',
+      contextJobQueued: '任务已入队，等待执行。',
+      contextJobRunning: '任务执行中...',
+      contextJobDone: '任务完成，已开始下载。',
+      contextJobFailed: 'Context 导出失败。',
+      contextJobProgress: '进度',
+      contextJobStage: '阶段',
     },
   },
 };
@@ -341,6 +361,10 @@ async function fetchJson(url, options, requestFailedText) {
     throw new Error(err);
   }
   return res.json();
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function DashboardTable({ rows, t, language }) {
@@ -569,8 +593,11 @@ function App() {
   const [syncSortDir, setSyncSortDir] = useState('asc');
   const [syncStartDate, setSyncStartDate] = useState('');
   const [syncEndDate, setSyncEndDate] = useState('');
+  const [contextJobStatus, setContextJobStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const contextJobRunning = contextJobStatus && ['queued', 'running'].includes(contextJobStatus.status);
 
   const fileTimeTag = () => new Date().toISOString().replace(/[:.]/g, '-');
 
@@ -599,6 +626,7 @@ function App() {
 
   useEffect(() => {
     if (!selectedStore) return;
+    setContextJobStatus(null);
     const selectedOption = stores.find((item) => item.store_id === selectedStore);
     if (selectedOption && !selectedOption.has_local_data) {
       setLoading(true);
@@ -874,6 +902,84 @@ function App() {
     downloadTextFile(filename, content);
   };
 
+  const onDownloadContextPackage = async () => {
+    if (!selectedStore) return;
+    if (contextJobRunning) return;
+    setError('');
+    setContextJobStatus({
+      status: 'queued',
+      progress_pct: 0,
+      stage: 'queued',
+      message: t.playbook.contextJobQueued,
+    });
+    try {
+      const createResp = await fetchJson(
+        '/api/lingxing/context-package/jobs',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            store_id: selectedStore,
+            days: 365,
+          }),
+        },
+        t.requestFailed,
+      );
+
+      const jobId = createResp.job_id;
+      setContextJobStatus({
+        job_id: jobId,
+        status: 'queued',
+        progress_pct: 0,
+        stage: 'queued',
+        message: t.playbook.contextJobQueued,
+      });
+
+      while (true) {
+        await sleep(2000);
+        const statusResp = await fetchJson(
+          `/api/lingxing/context-package/jobs/${jobId}`,
+          undefined,
+          t.requestFailed,
+        );
+        setContextJobStatus(statusResp);
+
+        if (statusResp.status === 'failed') {
+          throw new Error(statusResp.message || t.playbook.contextJobFailed);
+        }
+
+        if (statusResp.status !== 'succeeded') {
+          continue;
+        }
+
+        const downloadResp = await fetch(`/api/lingxing/context-package/jobs/${jobId}/download`);
+        if (!downloadResp.ok) {
+          const detail = await downloadResp.json().catch(() => ({}));
+          throw new Error(detail?.detail || `${t.requestFailed}: ${downloadResp.status}`);
+        }
+
+        const blob = await downloadResp.blob();
+        const disposition = downloadResp.headers.get('content-disposition') || '';
+        const matched = disposition.match(/filename="?([^"]+)"?/i);
+        const filename = matched?.[1] || `${selectedStore}_context_package.json`;
+        downloadBlobFile(filename, blob);
+        setContextJobStatus({
+          ...statusResp,
+          message: t.playbook.contextJobDone,
+        });
+        break;
+      }
+    } catch (err) {
+      const message = err?.message || t.playbook.contextJobFailed;
+      setError(message);
+      setContextJobStatus((prev) => ({
+        ...(prev || {}),
+        status: 'failed',
+        message,
+      }));
+    }
+  };
+
   const onImportWhitepaper = async () => {
     if (!selectedStore) return;
     if (!whitepaperFile) {
@@ -1089,6 +1195,17 @@ function App() {
                       ${t.playbook.syncBtn}
                     </button>
                     <button
+                      onClick=${onDownloadContextPackage}
+                      disabled=${Boolean(contextJobRunning)}
+                      className=${`rounded-md border px-4 py-2 text-sm font-semibold ${
+                        contextJobRunning
+                          ? 'cursor-not-allowed border-brand-100 bg-brand-50 text-brand-300'
+                          : 'border-brand-300 bg-white text-brand-700 hover:bg-brand-50'
+                      }`}
+                    >
+                      ${t.playbook.contextExportBtn}
+                    </button>
+                    <button
                       onClick=${onAnalyzeUploadFile}
                       className="rounded-md border border-brand-300 bg-white px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50"
                     >
@@ -1140,6 +1257,15 @@ function App() {
                         }}
                       />`
                     : html`<p className="mt-2 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">${t.playbook.syncSummaryEmpty}</p>`}
+                </div>
+
+                <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
+                  <h4 className="text-sm font-semibold">${t.playbook.contextJobLabel}</h4>
+                  <p className="mt-2 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">
+                    ${contextJobStatus
+                      ? `${t.playbook.contextJobProgress}: ${contextJobStatus.progress_pct ?? 0}% | ${t.playbook.contextJobStage}: ${contextJobStatus.stage || '-'} | ${contextJobStatus.message || t.playbook.contextJobRunning}`
+                      : t.playbook.contextJobIdle}
+                  </p>
                 </div>
 
                 <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">

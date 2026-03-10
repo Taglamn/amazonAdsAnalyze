@@ -17,6 +17,7 @@
 - `app/gemini_bridge.py`: Playbook 加载、租户校验、Gemini 调用
 - `app/lingxing_client.py`: 领星 OpenAPI 客户端（签名、鉴权、分页）
 - `app/lingxing_sync.py`: 领星同步与分析编排（可落盘到本地 CSV）
+- `app/context_export_jobs.py`: Context Package 异步导出任务管理（内存任务 + 磁盘文件）
 - `app/upload_analysis.py`: 上传 Excel 解析与标准化
 - `app/static/index.html`: 前端页面容器 + Tailwind
 - `app/static/app.js`: React 管理面板
@@ -126,6 +127,8 @@ cp .env.example .env
 - `LINGXING_TLS_MODE`（`default` 或 `tls1_2`）
 - `LINGXING_PROXY_URL`（如 `http://proxy.company.com:8080`）
 - `LINGXING_INSECURE_SKIP_VERIFY`（仅诊断用途，不建议生产开启）
+- `CONTEXT_EXPORT_MAX_WORKERS`（Context Package 异步导出并发，默认 `1`）
+- `CONTEXT_EXPORT_RETENTION_HOURS`（异步导出文件保留小时数，默认 `24`）
 
 系统会自动读取项目根目录 `.env`（通过 `python-dotenv`），无需额外 `export`。
 
@@ -161,7 +164,17 @@ python scripts/lingxing_network_check.py
 - `POST /api/stores/{store_id}/whitepaper/import`（导入 `.txt/.md` 白皮书）
 - `GET /api/stores/{store_id}/whitepaper/export`（导出白皮书）
 - `POST /api/lingxing/sync`（自动同步领星广告数据+历史操作并分析）
+- `POST /api/lingxing/context-package/jobs`（创建 Context Package 异步导出任务）
+- `GET /api/lingxing/context-package/jobs/{job_id}`（查询导出任务状态/进度）
+- `GET /api/lingxing/context-package/jobs/{job_id}/download`（任务完成后下载导出文件）
+- `POST /api/lingxing/context-package/export`（导出当前店铺 365 天 Context Package，供 Gemini 使用）
 - `POST /api/ai/upload-analysis`（上传 Excel 并调用 Gemini 分析）
+
+Context Package 异步导出流程：
+
+1. `POST /api/lingxing/context-package/jobs` 创建任务
+2. `GET /api/lingxing/context-package/jobs/{job_id}` 轮询状态（`queued/running/succeeded/failed`）
+3. `GET /api/lingxing/context-package/jobs/{job_id}/download` 下载结果文件
 
 AI 接口支持 `lang` 参数（`zh` / `en`），例如：
 
@@ -239,3 +252,25 @@ python scripts/lingxing_sync.py --start-date 2026-03-01 --end-date 2026-03-07
 # 仅查看分析结果，不落盘
 python scripts/lingxing_sync.py --report-date 2026-03-08 --no-persist
 ```
+
+## Context Package 导出脚本
+
+```bash
+# 默认过去 365 天
+python scripts/lingxing_context_package.py --store-id lingxing_123456
+
+# 指定时间范围
+python scripts/lingxing_context_package.py --store-id lingxing_123456 --start-date 2025-03-01 --end-date 2026-02-28
+
+# 指定输出文件
+python scripts/lingxing_context_package.py --store-id lingxing_123456 --output /tmp/context_package.json
+```
+
+导出的 `ad_groups[]` 现包含 `placement_metrics[]`，用于给 Gemini 识别不同广告位对 ACoS 的影响，字段包括：
+
+- `placement_type`
+- `top_of_search_is`
+- `clicks`
+- `spend`
+- `sales`
+- `acos`

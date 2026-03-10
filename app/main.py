@@ -6,11 +6,12 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .analysis import build_bid_recommendations, build_optimization_cases
+from .context_export_jobs import context_export_job_manager
 from .data_access import HISTORY_DIR, PERFORMANCE_DIR, Store, store_repo
 from .gemini_bridge import (
     build_advice_prompt,
@@ -23,6 +24,7 @@ from .gemini_bridge import (
 )
 from .lingxing_sync import sync_lingxing_data
 from .lingxing_client import LingxingClient, LingxingCredentials
+from .lingxing_context_package import build_lingxing_context_package
 from .upload_analysis import build_upload_summary, parse_uploaded_workbook, serialize_performance_rows
 from .whitepaper_store import load_whitepaper, save_whitepaper, whitepaper_info
 
@@ -59,6 +61,20 @@ class LingxingSyncRequest(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     persist: bool = True
+
+
+class ContextPackageRequest(BaseModel):
+    store_id: str
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    days: int = 365
+
+
+class ContextPackageJobRequest(BaseModel):
+    store_id: str
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    days: int = 365
 
 
 DEFAULT_UPLOAD_RULES = {
@@ -387,6 +403,83 @@ def sync_lingxing(payload: LingxingSyncRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return result
+
+
+@app.post("/api/lingxing/context-package/jobs", status_code=202)
+def create_lingxing_context_package_job(payload: ContextPackageJobRequest) -> Dict[str, Any]:
+    try:
+        result = context_export_job_manager.create_job(
+            store_id=payload.store_id,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            days=payload.days,
+            build_func=build_lingxing_context_package,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return result
+
+
+@app.get("/api/lingxing/context-package/jobs/{job_id}")
+def get_lingxing_context_package_job(job_id: str) -> Dict[str, Any]:
+    job = context_export_job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Context package job not found")
+    return job
+
+
+@app.get("/api/lingxing/context-package/jobs/{job_id}/download")
+def download_lingxing_context_package_job(job_id: str) -> FileResponse:
+    info = context_export_job_manager.get_download_info(job_id)
+    if not info:
+        raise HTTPException(status_code=404, detail="Context package job not found")
+
+    status = str(info.get("status") or "")
+    if status != "succeeded":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Context package job is {status}. Please wait until it succeeds.",
+        )
+
+    file_path_text = str(info.get("file_path") or "").strip()
+    if not file_path_text:
+        raise HTTPException(status_code=404, detail="Context package file is missing")
+
+    file_path = Path(file_path_text)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Context package file not found on disk")
+
+    filename = str(info.get("filename") or f"{job_id}_context_package.json")
+    return FileResponse(
+        path=file_path,
+        media_type="application/json; charset=utf-8",
+        filename=filename,
+    )
+
+
+@app.post("/api/lingxing/context-package/export")
+def export_lingxing_context_package(payload: ContextPackageRequest) -> Response:
+    try:
+        package = build_lingxing_context_package(
+            store_id=payload.store_id,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            days=payload.days,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    window = package.get("window", {})
+    start = str(window.get("start_date") or "start")
+    end = str(window.get("end_date") or "end")
+    filename = f"{payload.store_id}_context_package_{start}_{end}.json"
+    headers = {"Content-Disposition": f'attachment; filename=\"{filename}\"'}
+    return Response(
+        content=json.dumps(package, ensure_ascii=False, indent=2),
+        media_type="application/json; charset=utf-8",
+        headers=headers,
+    )
 
 
 @app.post("/api/ai/upload-analysis")
