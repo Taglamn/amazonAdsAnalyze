@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .analysis import build_bid_recommendations, build_optimization_cases
-from .data_access import Store, store_repo
+from .data_access import HISTORY_DIR, PERFORMANCE_DIR, Store, store_repo
 from .gemini_bridge import (
     build_advice_prompt,
     build_whitepaper_prompt,
@@ -22,6 +22,7 @@ from .gemini_bridge import (
     yesterday_metrics_from_rows,
 )
 from .lingxing_sync import sync_lingxing_data
+from .lingxing_client import LingxingClient, LingxingCredentials
 from .upload_analysis import build_upload_summary, parse_uploaded_workbook, serialize_performance_rows
 from .whitepaper_store import load_whitepaper, save_whitepaper, whitepaper_info
 
@@ -53,6 +54,7 @@ class WhitepaperRequest(BaseModel):
 
 
 class LingxingSyncRequest(BaseModel):
+    store_id: Optional[str] = None
     report_date: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
@@ -105,14 +107,84 @@ def _build_stored_text_meta(content: str) -> Dict[str, Any]:
     }
 
 
+def _list_lingxing_bound_stores() -> List[Dict[str, Any]]:
+    credentials = LingxingCredentials.from_env()
+    client = LingxingClient(credentials=credentials)
+    access_token = client.generate_access_token()
+    sellers = client.list_sellers(access_token=access_token)
+
+    stores: List[Dict[str, Any]] = []
+    for item in sellers:
+        if int(item.get("status", 0) or 0) != 1:
+            continue
+        if int(item.get("has_ads_setting", 0) or 0) != 1:
+            continue
+
+        sid = int(item["sid"])
+        store_id = f"lingxing_{sid}"
+        stores.append(
+            {
+                "store_id": store_id,
+                "store_name": str(item.get("name") or store_id),
+                "sid": sid,
+                "country": item.get("country"),
+                "has_local_data": (
+                    (PERFORMANCE_DIR / f"{store_id}.csv").exists()
+                    and (HISTORY_DIR / f"{store_id}.csv").exists()
+                ),
+                "source": "lingxing_bound",
+            }
+        )
+
+    stores.sort(key=lambda x: str(x.get("store_name") or x.get("store_id")))
+    return stores
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/api/stores")
-def list_stores() -> Dict[str, List[str]]:
-    return {"stores": store_repo.list_store_ids()}
+def list_stores(include_bound: bool = True) -> Dict[str, Any]:
+    local_stores = store_repo.list_stores()
+    stores: List[Dict[str, Any]] = [
+        {
+            "store_id": item["store_id"],
+            "store_name": item["store_name"],
+            "has_local_data": True,
+            "source": "local",
+        }
+        for item in local_stores
+    ]
+
+    bound_error: Optional[str] = None
+    if include_bound:
+        try:
+            bound_stores = _list_lingxing_bound_stores()
+            merged: Dict[str, Dict[str, Any]] = {item["store_id"]: item for item in stores}
+            for item in bound_stores:
+                existing = merged.get(item["store_id"])
+                if existing:
+                    existing["store_name"] = item["store_name"] or existing["store_name"]
+                    existing["sid"] = item.get("sid")
+                    existing["country"] = item.get("country")
+                    existing["source"] = "local+lingxing_bound"
+                else:
+                    merged[item["store_id"]] = item
+            stores = sorted(
+                merged.values(),
+                key=lambda x: str(x.get("store_name") or x.get("store_id")),
+            )
+        except Exception as exc:  # noqa: BLE001
+            bound_error = str(exc)
+
+    return {
+        "stores": stores,
+        "store_ids": [item["store_id"] for item in stores],
+        "include_bound": include_bound,
+        "bound_error": bound_error,
+    }
 
 
 def _serialize_store_rows(store: Store) -> List[Dict[str, Any]]:
@@ -303,6 +375,7 @@ def export_store_whitepaper(store_id: str) -> PlainTextResponse:
 def sync_lingxing(payload: LingxingSyncRequest) -> Dict[str, Any]:
     try:
         result = sync_lingxing_data(
+            store_id=payload.store_id,
             report_date=payload.report_date,
             start_date=payload.start_date,
             end_date=payload.end_date,

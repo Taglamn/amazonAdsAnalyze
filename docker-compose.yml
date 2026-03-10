@@ -1,0 +1,13 @@
+services:
+  amazon-ads-analyze:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: amazon-ads-analyze
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    volumes:
+      - ./app/data:/app/app/data
+    restart: unless-stopped

@@ -8,7 +8,7 @@ import socket
 import ssl
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib import error, parse, request
 
 try:
@@ -409,25 +409,96 @@ class LingxingClient:
 
         for sponsored_type, path in (
             ("sp", "/pb/openapi/newad/spAdGroups"),
+            ("sb", "/pb/openapi/newad/hsaAdGroups"),
             ("sd", "/pb/openapi/newad/sdAdGroups"),
         ):
             payload = {"sid": sid}
-            data = self._post_paginated(
-                access_token=access_token,
-                path=path,
-                body=payload,
-            )
+            try:
+                data = self._post_paginated(
+                    access_token=access_token,
+                    path=path,
+                    body=payload,
+                )
+            except LingxingApiError:
+                # Some ad types/accounts may not support this endpoint.
+                continue
             for item in data:
                 default_bid = item.get("default_bid")
                 if default_bid is None:
+                    default_bid = item.get("bid")
+                if default_bid is None:
+                    default_bid = item.get("base_bid")
+                if default_bid is None:
                     continue
+
+                campaign_id = (
+                    item.get("campaign_id")
+                    or item.get("campaignId")
+                    or item.get("campaign")
+                )
+                campaign_name = (
+                    item.get("campaign_name")
+                    or item.get("campaignName")
+                    or item.get("campaign")
+                )
+                ad_group_id = item.get("ad_group_id") or item.get("adGroupId")
+                ad_group_name = (
+                    item.get("name")
+                    or item.get("ad_group_name")
+                    or item.get("adGroupName")
+                )
                 rows.append(
                     {
                         "sponsored_type": sponsored_type,
-                        "ad_group_id": item.get("ad_group_id"),
-                        "ad_group": item.get("name") or f"{sponsored_type}_{item.get('ad_group_id')}",
+                        "campaign_id": campaign_id,
+                        "campaign_name": campaign_name,
+                        "ad_group_id": ad_group_id,
+                        "ad_group": ad_group_name or f"{sponsored_type}_{ad_group_id}",
                         "current_bid": default_bid,
                     }
                 )
 
         return rows
+
+    def fetch_campaign_names(self, access_token: str, sid: int) -> Dict[Tuple[str, int], str]:
+        mapping: Dict[Tuple[str, int], str] = {}
+
+        specs = [
+            ("sp", "/pb/openapi/newad/spCampaigns"),
+            ("sb", "/pb/openapi/newad/hsaCampaigns"),
+            ("sd", "/pb/openapi/newad/sdCampaigns"),
+        ]
+
+        for sponsored_type, path in specs:
+            payload = {"sid": sid}
+            try:
+                data = self._post_paginated(
+                    access_token=access_token,
+                    path=path,
+                    body=payload,
+                )
+            except LingxingApiError:
+                continue
+
+            for item in data:
+                campaign_id = item.get("campaign_id") or item.get("campaignId") or item.get("id")
+                try:
+                    campaign_id_int = int(float(campaign_id))
+                except (TypeError, ValueError):
+                    continue
+
+                name = (
+                    item.get("name")
+                    or item.get("campaign_name")
+                    or item.get("campaignName")
+                )
+                if name is None:
+                    continue
+
+                campaign_name = str(name).strip()
+                if not campaign_name:
+                    continue
+
+                mapping[(sponsored_type, campaign_id_int)] = campaign_name
+
+        return mapping

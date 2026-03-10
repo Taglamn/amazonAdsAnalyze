@@ -52,6 +52,12 @@ const I18N = {
       title: 'AI Decision Engine',
       subtitle: 'Generate strategy whitepaper and bid advice with Gemini API.',
       syncBtn: 'Sync Lingxing Data',
+      syncDateRangeLabel: 'Lingxing Sync Date Range',
+      syncStartDate: 'Start Date',
+      syncEndDate: 'End Date',
+      syncDateHint: 'Leave both empty for default recent 14 days.',
+      syncDateInvalid: 'Please set both start and end dates, and ensure start <= end.',
+      syncCurrentStoreOnly: 'Only the currently selected store will be synced.',
       uploadBtn: 'Upload & Analyze File',
       uploadLabel: 'Ad Group Excel File',
       uploadHint: 'Upload an Excel file with two sheets: daily ad data + operation history.',
@@ -80,6 +86,21 @@ const I18N = {
       adviceEmpty: 'No advice generated yet.',
       syncSummaryEmpty: 'Lingxing sync has not run yet.',
       syncSummaryLabel: 'Lingxing Sync Summary',
+      storeNotSyncedHint: 'Selected store has no local data yet. Run Lingxing sync first.',
+      syncTable: {
+        adCombo: 'Ad Type',
+        campaign: 'Campaign name',
+        adGroup: 'Ad Group',
+        currentBid: 'Current Bid',
+        suggestedBid: 'Suggested Bid',
+        clicks: 'Clicks',
+        spend: 'Spend',
+        sales: 'Sales',
+        acos: 'ACoS',
+      },
+      syncTableEmpty: 'No ad groups with spend in the selected period.',
+      sortAsc: 'Ascending',
+      sortDesc: 'Descending',
     },
   },
   zh: {
@@ -127,6 +148,12 @@ const I18N = {
       title: 'AI 决策引擎',
       subtitle: '基于 Gemini 自动生成策略白皮书与调价建议。',
       syncBtn: '同步领星数据并分析',
+      syncDateRangeLabel: '领星同步日期筛选',
+      syncStartDate: '开始日期',
+      syncEndDate: '结束日期',
+      syncDateHint: '开始和结束都留空时，默认同步最近 14 天。',
+      syncDateInvalid: '请同时填写开始/结束日期，并确保开始日期不晚于结束日期。',
+      syncCurrentStoreOnly: '仅同步当前已选店铺的数据。',
       uploadBtn: '上传文档并分析',
       uploadLabel: '广告组 Excel 文件',
       uploadHint: '请上传包含两个 sheet 的 Excel：广告日数据 + 操作历史。',
@@ -155,6 +182,21 @@ const I18N = {
       adviceEmpty: '暂未生成建议。',
       syncSummaryEmpty: '尚未执行领星同步。',
       syncSummaryLabel: '领星同步结果',
+      storeNotSyncedHint: '当前店铺还没有本地数据，请先执行领星同步。',
+      syncTable: {
+        adCombo: '广告组合',
+        campaign: 'Campaign name',
+        adGroup: '广告组',
+        currentBid: '当前bid',
+        suggestedBid: '建议bid',
+        clicks: '点击次数',
+        spend: '消耗金额',
+        sales: '销售额',
+        acos: 'ACoS',
+      },
+      syncTableEmpty: '所选周期内没有消耗金额大于 0 的广告组。',
+      sortAsc: '升序',
+      sortDesc: '降序',
     },
   },
 };
@@ -169,6 +211,34 @@ function getDefaultLanguage() {
     // Ignore localStorage failures.
   }
   return navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+}
+
+function normalizeStores(rawStores) {
+  if (!Array.isArray(rawStores)) return [];
+
+  const stores = rawStores
+    .map((item) => {
+      if (typeof item === 'string') {
+        const storeId = item.trim();
+        if (!storeId) return null;
+        if (storeId === 'store_a' || storeId === 'store_b') return null;
+        return { store_id: storeId, store_name: storeId, has_local_data: true };
+      }
+
+      if (item && typeof item === 'object') {
+        const storeId = String(item.store_id || '').trim();
+        if (!storeId) return null;
+        if (storeId === 'store_a' || storeId === 'store_b') return null;
+        const storeName = String(item.store_name || storeId).trim() || storeId;
+        return { store_id: storeId, store_name: storeName, has_local_data: Boolean(item.has_local_data) };
+      }
+
+      return null;
+    })
+    .filter(Boolean);
+
+  stores.sort((a, b) => a.store_name.localeCompare(b.store_name));
+  return stores;
 }
 
 function localizeRecommendationReason(reason, language) {
@@ -359,6 +429,120 @@ function OptimizationCases({ cases, t, language }) {
   `;
 }
 
+function LingxingSyncTable({ rows, t, language, sortKey, sortDir, onSort }) {
+  if (!rows.length) {
+    return html`<p className="mt-2 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">${t.playbook.syncTableEmpty}</p>`;
+  }
+
+  const keyMap = {
+    ad_combo: 'ad_combo',
+    campaign: 'campaign_name',
+    ad_group: 'ad_group',
+    current_bid: 'current_bid',
+    suggested_bid: 'suggested_bid',
+    clicks: 'clicks',
+    spend: 'spend',
+    sales: 'sales',
+    acos: 'acos',
+  };
+
+  const dataKey = keyMap[sortKey] || 'campaign_name';
+  const sortedRows = [...rows].sort((a, b) => {
+    const av = a[dataKey];
+    const bv = b[dataKey];
+    if (av === bv) {
+      if (a.ad_combo !== b.ad_combo) return String(a.ad_combo).localeCompare(String(b.ad_combo));
+      if (a.campaign_name !== b.campaign_name) return String(a.campaign_name).localeCompare(String(b.campaign_name));
+      return String(a.ad_group).localeCompare(String(b.ad_group));
+    }
+
+    const aNum = typeof av === 'number' ? av : Number(av);
+    const bNum = typeof bv === 'number' ? bv : Number(bv);
+    let result = 0;
+    if (!Number.isNaN(aNum) && !Number.isNaN(bNum)) {
+      result = aNum - bNum;
+    } else {
+      result = String(av ?? '').localeCompare(String(bv ?? ''));
+    }
+    return sortDir === 'asc' ? result : -result;
+  });
+
+  const rowSpans = new Array(sortedRows.length).fill(0);
+  for (let i = 0; i < sortedRows.length; i += 1) {
+    if (
+      i > 0
+      && sortedRows[i].ad_combo === sortedRows[i - 1].ad_combo
+      && sortedRows[i].campaign_name === sortedRows[i - 1].campaign_name
+    ) continue;
+    let count = 1;
+    while (
+      i + count < sortedRows.length
+      && sortedRows[i + count].ad_combo === sortedRows[i].ad_combo
+      && sortedRows[i + count].campaign_name === sortedRows[i].campaign_name
+    ) {
+      count += 1;
+    }
+    rowSpans[i] = count;
+  }
+
+  const fmtBid = (value) => (value === null || value === undefined ? '-' : Number(value).toFixed(2));
+  const renderSortTh = (label, key) => {
+    const active = sortKey === key;
+    const arrow = active ? (sortDir === 'asc' ? '↑' : '↓') : '';
+    const nextLabel = active && sortDir === 'asc' ? t.playbook.sortDesc : t.playbook.sortAsc;
+    return html`
+      <button
+        type="button"
+        onClick=${() => onSort(key)}
+        title=${nextLabel}
+        className="inline-flex items-center gap-1 font-semibold text-brand-800 hover:text-brand-600"
+      >
+        <span>${label}</span>
+        <span>${arrow}</span>
+      </button>
+    `;
+  };
+
+  return html`
+    <div className="mt-2 overflow-hidden rounded-lg border border-brand-100 bg-white">
+      <table className="min-w-full divide-y divide-brand-100 text-sm">
+        <thead className="bg-brand-50">
+          <tr>
+            <th className="px-3 py-2 text-left">${renderSortTh(t.playbook.syncTable.adCombo, 'ad_combo')}</th>
+            <th className="px-3 py-2 text-left">${renderSortTh(t.playbook.syncTable.campaign, 'campaign')}</th>
+            <th className="px-3 py-2 text-left">${renderSortTh(t.playbook.syncTable.adGroup, 'ad_group')}</th>
+            <th className="px-3 py-2 text-left">${renderSortTh(t.playbook.syncTable.currentBid, 'current_bid')}</th>
+            <th className="px-3 py-2 text-left">${renderSortTh(t.playbook.syncTable.suggestedBid, 'suggested_bid')}</th>
+            <th className="px-3 py-2 text-left">${renderSortTh(t.playbook.syncTable.clicks, 'clicks')}</th>
+            <th className="px-3 py-2 text-left">${renderSortTh(t.playbook.syncTable.spend, 'spend')}</th>
+            <th className="px-3 py-2 text-left">${renderSortTh(t.playbook.syncTable.sales, 'sales')}</th>
+            <th className="px-3 py-2 text-left">${renderSortTh(t.playbook.syncTable.acos, 'acos')}</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-brand-50">
+          ${sortedRows.map(
+            (row, index) => html`
+              <tr key=${`${row.ad_combo}__${row.campaign_name}__${row.ad_group}__${index}`} className="align-top hover:bg-brand-50/70">
+                <td className="px-3 py-2">${row.ad_combo || '-'}</td>
+                ${rowSpans[index]
+                  ? html`<td rowSpan=${rowSpans[index]} className="px-3 py-2 font-semibold text-brand-800">${row.campaign_name || row.campaign || '-'}</td>`
+                  : null}
+                <td className="px-3 py-2">${row.ad_group}</td>
+                <td className="px-3 py-2">${fmtBid(row.current_bid)}</td>
+                <td className="px-3 py-2 font-semibold text-brand-700">${fmtBid(row.suggested_bid)}</td>
+                <td className="px-3 py-2">${row.clicks ?? 0}</td>
+                <td className="px-3 py-2">${fmtMoney(row.spend ?? 0, language)}</td>
+                <td className="px-3 py-2">${fmtMoney(row.sales ?? 0, language)}</td>
+                <td className="px-3 py-2">${fmtPct(row.acos ?? 0)}</td>
+              </tr>
+            `,
+          )}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function App() {
   const [language, setLanguage] = useState(getDefaultLanguage());
   const t = useMemo(() => I18N[language], [language]);
@@ -380,6 +564,11 @@ function App() {
   const [uploadSummary, setUploadSummary] = useState('');
   const [whitepaperStorageSummary, setWhitepaperStorageSummary] = useState('');
   const [syncSummary, setSyncSummary] = useState('');
+  const [syncRows, setSyncRows] = useState([]);
+  const [syncSortKey, setSyncSortKey] = useState('campaign');
+  const [syncSortDir, setSyncSortDir] = useState('asc');
+  const [syncStartDate, setSyncStartDate] = useState('');
+  const [syncEndDate, setSyncEndDate] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -396,11 +585,13 @@ function App() {
   }, [t, language]);
 
   useEffect(() => {
-    fetchJson('/api/stores', undefined, I18N.en.requestFailed)
+    fetchJson('/api/stores?include_bound=true', undefined, I18N.en.requestFailed)
       .then((data) => {
-        setStores(data.stores || []);
-        if (data.stores?.length) {
-          setSelectedStore(data.stores[0]);
+        const options = normalizeStores(data.stores || data.store_ids || []);
+        setStores(options);
+        if (options.length) {
+          const firstLocal = options.find((item) => item.has_local_data);
+          setSelectedStore((firstLocal || options[0]).store_id);
         }
       })
       .catch((err) => setError(err.message));
@@ -408,6 +599,43 @@ function App() {
 
   useEffect(() => {
     if (!selectedStore) return;
+    const selectedOption = stores.find((item) => item.store_id === selectedStore);
+    if (selectedOption && !selectedOption.has_local_data) {
+      setLoading(true);
+      setError('');
+      setPerformanceRows([]);
+      setRecommendations([]);
+      setCases([]);
+      setSyncRows([]);
+
+      fetchJson(`/api/stores/${selectedStore}/whitepaper`, undefined, t.requestFailed)
+        .then((whitepaperRes) => {
+          setWhitepaper(whitepaperRes.content || '');
+          setWhitepaperMeta(
+            whitepaperRes.exists
+              ? {
+                  finish_reason: 'STORED',
+                  finish_reasons: ['STORED'],
+                  char_count: whitepaperRes.char_count || 0,
+                  line_count: whitepaperRes.line_count || 0,
+                }
+              : {},
+          );
+          setWhitepaperStorageSummary(
+            whitepaperRes.exists
+              ? `${t.playbook.lines}: ${whitepaperRes.line_count || 0}, ${t.playbook.chars}: ${whitepaperRes.char_count || 0}`
+              : t.playbook.storeNotSyncedHint,
+          );
+        })
+        .catch(() => {
+          setWhitepaper('');
+          setWhitepaperMeta({});
+          setWhitepaperStorageSummary(t.playbook.storeNotSyncedHint);
+        })
+        .finally(() => setLoading(false));
+      return;
+    }
+
     setLoading(true);
     setError('');
 
@@ -440,7 +668,15 @@ function App() {
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [selectedStore, t.requestFailed, t.playbook.lines, t.playbook.chars, t.playbook.whitepaperStorageEmpty]);
+  }, [
+    selectedStore,
+    stores,
+    t.requestFailed,
+    t.playbook.lines,
+    t.playbook.chars,
+    t.playbook.whitepaperStorageEmpty,
+    t.playbook.storeNotSyncedHint,
+  ]);
 
   const onGenerateWhitepaper = async () => {
     if (!selectedStore) return;
@@ -470,29 +706,51 @@ function App() {
   };
 
   const onSyncLingxing = async () => {
+    if (!selectedStore) return;
+    if ((syncStartDate && !syncEndDate) || (!syncStartDate && syncEndDate)) {
+      setError(t.playbook.syncDateInvalid);
+      return;
+    }
+    if (syncStartDate && syncEndDate && syncStartDate > syncEndDate) {
+      setError(t.playbook.syncDateInvalid);
+      return;
+    }
+
     setLoading(true);
     setError('');
+    setSyncRows([]);
     try {
+      const requestBody = { store_id: selectedStore };
+      if (syncStartDate && syncEndDate) {
+        requestBody.start_date = syncStartDate;
+        requestBody.end_date = syncEndDate;
+      }
+
       const syncRes = await fetchJson(
         '/api/lingxing/sync',
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
+          body: JSON.stringify(requestBody),
         },
         t.requestFailed,
       );
 
-      const summary = `${syncRes.stores_synced}/${syncRes.stores_ads_enabled}`;
+      const summary = JSON.stringify(syncRes, null, 2);
       setSyncSummary(summary);
+      const tableRows = (syncRes.stores || []).flatMap((store) => store.lingxing_output_rows || []);
+      setSyncRows(tableRows);
+      setSyncSortKey('campaign');
+      setSyncSortDir('asc');
 
-      const storeRes = await fetchJson('/api/stores', undefined, t.requestFailed);
-      const newStores = storeRes.stores || [];
+      const storeRes = await fetchJson('/api/stores?include_bound=true', undefined, t.requestFailed);
+      const newStores = normalizeStores(storeRes.stores || storeRes.store_ids || []);
       setStores(newStores);
+      const storeIds = newStores.map((item) => item.store_id);
 
       if (newStores.length) {
-        if (!newStores.includes(selectedStore)) {
-          setSelectedStore(newStores[0]);
+        if (!storeIds.includes(selectedStore)) {
+          setSelectedStore(newStores[0].store_id);
         } else {
           const [perfRes, recRes, caseRes] = await Promise.all([
             fetchJson(`/api/stores/${selectedStore}/performance`, undefined, t.requestFailed),
@@ -743,7 +1001,10 @@ function App() {
               value=${selectedStore}
               onChange=${(e) => setSelectedStore(e.target.value)}
             >
-              ${stores.map((store) => html`<option key=${store} value=${store}>${store}</option>`) }
+              ${stores.map(
+                (store) =>
+                  html`<option key=${store.store_id} value=${store.store_id}>${store.store_name}</option>`,
+              )}
             </select>
           </div>
         </header>
@@ -772,6 +1033,34 @@ function App() {
                 <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
                   <h3 className="text-base font-semibold">${t.playbook.title}</h3>
                   <p className="mt-1 text-sm text-brand-600">${t.playbook.subtitle}</p>
+                  <div className="mt-4 rounded-lg border border-brand-100 bg-brand-50 p-3">
+                    <label className="block text-sm font-semibold text-brand-800">${t.playbook.syncDateRangeLabel}</label>
+                    <p className="mt-1 text-xs text-brand-600">
+                      ${t.playbook.syncDateHint}
+                      <br />
+                      ${t.playbook.syncCurrentStoreOnly}
+                    </p>
+                    <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+                      <label className="block">
+                        <span className="mb-1 block text-xs font-medium text-brand-700">${t.playbook.syncStartDate}</span>
+                        <input
+                          type="date"
+                          value=${syncStartDate}
+                          onChange=${(e) => setSyncStartDate(e.target.value)}
+                          className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-xs font-medium text-brand-700">${t.playbook.syncEndDate}</span>
+                        <input
+                          type="date"
+                          value=${syncEndDate}
+                          onChange=${(e) => setSyncEndDate(e.target.value)}
+                          className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
+                        />
+                      </label>
+                    </div>
+                  </div>
                   <div className="mt-4 rounded-lg border border-brand-100 bg-brand-50 p-3">
                     <label className="block text-sm font-semibold text-brand-800">${t.playbook.uploadLabel}</label>
                     <p className="mt-1 text-xs text-brand-600">${t.playbook.uploadHint}</p>
@@ -834,7 +1123,23 @@ function App() {
 
                 <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
                   <h4 className="text-sm font-semibold">${t.playbook.syncSummaryLabel}</h4>
-                  <p className="mt-2 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">${syncSummary || t.playbook.syncSummaryEmpty}</p>
+                  ${syncSummary
+                    ? html`<${LingxingSyncTable}
+                        rows=${syncRows}
+                        t=${t}
+                        language=${language}
+                        sortKey=${syncSortKey}
+                        sortDir=${syncSortDir}
+                        onSort=${(key) => {
+                          if (syncSortKey === key) {
+                            setSyncSortDir((v) => (v === 'asc' ? 'desc' : 'asc'));
+                            return;
+                          }
+                          setSyncSortKey(key);
+                          setSyncSortDir('asc');
+                        }}
+                      />`
+                    : html`<p className="mt-2 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">${t.playbook.syncSummaryEmpty}</p>`}
                 </div>
 
                 <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">

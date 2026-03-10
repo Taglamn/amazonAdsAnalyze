@@ -42,6 +42,67 @@ uvicorn app.main:app --reload
 
 打开：`http://127.0.0.1:8000`
 
+## Docker 部署（Alibaba Cloud Linux，公网访问 8080）
+
+已提供：
+
+- `Dockerfile`
+- `docker-compose.yml`
+- `.dockerignore`
+
+### 1) 服务器准备
+
+```bash
+cd /path/to/Amazon_Ads_Analyze
+cp .env.example .env
+# 编辑 .env，填入 GEMINI / 领星配置
+```
+
+### 2) 启动容器（端口 8080）
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+容器内服务监听：`0.0.0.0:8080`  
+宿主机映射：`8080:8080`
+
+访问地址：
+
+`http://<你的公网IP>:8080`
+
+### 3) 放行云上与系统防火墙端口
+
+必须同时满足以下两项：
+
+1. 阿里云安全组入方向放行 `TCP 8080`
+2. 系统防火墙放行 `8080/tcp`（如启用了 `firewalld`）
+
+`firewalld` 示例：
+
+```bash
+sudo firewall-cmd --permanent --add-port=8080/tcp
+sudo firewall-cmd --reload
+```
+
+### 4) 常用运维命令
+
+```bash
+# 查看日志
+docker compose logs -f
+
+# 重启
+docker compose restart
+
+# 停止并删除容器
+docker compose down
+```
+
+说明：
+
+- `docker-compose.yml` 已挂载 `./app/data:/app/app/data`，白皮书与同步数据会持久化到宿主机。
+
 ## 领星 ERP 配置（手工）
 
 按你的要求，需要先人工配置领星 ERP 用户名与密码，同时配置 OpenAPI 的 AppId / AppSecret。
@@ -89,7 +150,8 @@ python scripts/lingxing_network_check.py
 
 ## 关键 API
 
-- `GET /api/stores`
+- `GET /api/stores`（默认会尝试拉取领星绑定店铺名并返回 `store_id + store_name`）
+  - 可选查询参数：`include_bound=true|false`
 - `GET /api/stores/{store_id}/performance`
 - `GET /api/stores/{store_id}/ad-group-recommendations`
 - `GET /api/stores/{store_id}/optimization-cases`
@@ -116,6 +178,7 @@ AI 接口支持 `lang` 参数（`zh` / `en`），例如：
 
 ```json
 {
+  "store_id": "lingxing_123456",
   "start_date": "2026-03-01",
   "end_date": "2026-03-07",
   "persist": true
@@ -126,6 +189,7 @@ AI 接口支持 `lang` 参数（`zh` / `en`），例如：
 
 ```json
 {
+  "store_id": "lingxing_123456",
   "report_date": "2026-03-08",
   "persist": true
 }

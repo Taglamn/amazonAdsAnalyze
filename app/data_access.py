@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import pandas as pd
 
@@ -29,6 +30,36 @@ class StoreRepository:
 
     def list_store_ids(self) -> List[str]:
         return sorted(path.stem for path in PERFORMANCE_DIR.glob("*.csv"))
+
+    def list_stores(self) -> List[Dict[str, str]]:
+        return [
+            {
+                "store_id": store_id,
+                "store_name": self.get_store_name(store_id),
+            }
+            for store_id in self.list_store_ids()
+        ]
+
+    @staticmethod
+    def get_store_name(store_id: str) -> str:
+        playbook_path = PLAYBOOK_DIR / f"store_playbook_{store_id}.json"
+        if playbook_path.exists():
+            try:
+                payload: Any = json.loads(playbook_path.read_text(encoding="utf-8"))
+                if isinstance(payload, dict):
+                    direct_name = str(payload.get("store_name") or "").strip()
+                    if direct_name:
+                        return direct_name
+
+                    rules = payload.get("rules")
+                    if isinstance(rules, dict):
+                        nested_name = str(rules.get("store_name") or "").strip()
+                        if nested_name:
+                            return nested_name
+            except (OSError, json.JSONDecodeError):
+                pass
+
+        return store_id
 
     def get_store(self, store_id: str) -> Store:
         if store_id in self._cache:

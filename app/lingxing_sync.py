@@ -92,6 +92,166 @@ def _aggregate_daily_metrics(rows: List[Dict[str, Any]], target_date: date, stor
     }
 
 
+def _pick_first_str(item: Dict[str, Any], keys: List[str], fallback: str) -> str:
+    for key in keys:
+        value = item.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return fallback
+
+
+def _pick_first_int(item: Dict[str, Any], keys: List[str]) -> int | None:
+    for key in keys:
+        value = item.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _suggest_bid(current_bid: float | None, acos: float) -> float | None:
+    if current_bid is None:
+        return None
+    if acos > 45:
+        factor = 0.85
+    elif acos > 30:
+        factor = 0.92
+    elif acos < 20:
+        factor = 1.10
+    else:
+        factor = 1.0
+    return round(current_bid * factor, 2)
+
+
+def _build_lingxing_output_rows(
+    report_rows: List[Dict[str, Any]],
+    bid_snapshots: List[Dict[str, Any]],
+    campaign_name_map: Dict[Tuple[str, int], str],
+) -> List[Dict[str, Any]]:
+    snapshot_by_key: Dict[Tuple[str, int], Dict[str, Any]] = {}
+    for snap in bid_snapshots:
+        sponsored_type = str(snap.get("sponsored_type") or "").strip().lower()
+        ad_group_id = _pick_first_int(snap, ["ad_group_id", "adGroupId"])
+        if not sponsored_type or ad_group_id is None:
+            continue
+        snapshot_by_key[(sponsored_type, ad_group_id)] = snap
+
+    grouped: Dict[Tuple[str, int, int], Dict[str, Any]] = {}
+    for item in report_rows:
+        ad_combo = str(item.get("sponsored_type") or "").strip().upper() or "UNKNOWN"
+        sponsored_type = ad_combo.lower()
+
+        campaign_id = _pick_first_int(item, ["campaign_id", "campaignId", "campaign"])
+        ad_group_id = _pick_first_int(item, ["ad_group_id", "adGroupId", "adgroup_id"])
+        if campaign_id is None or ad_group_id is None:
+            continue
+
+        snapshot = snapshot_by_key.get((sponsored_type, ad_group_id), {})
+
+        campaign = campaign_name_map.get((sponsored_type, campaign_id), "").strip()
+        if not campaign:
+            campaign = _pick_first_str(
+                item,
+                [
+                    "campaign_name",
+                    "campaignName",
+                    "campaign",
+                    "campaign_name_cn",
+                    "campaign_name_en",
+                ],
+                _pick_first_str(
+                    snapshot,
+                    ["campaign_name", "campaignName", "campaign"],
+                    f"campaign_{campaign_id}",
+                ),
+            )
+        ad_group = _pick_first_str(
+            item,
+            [
+                "ad_group_name",
+                "adGroupName",
+                "ad_group",
+                "adgroup_name",
+                "name",
+            ],
+            _pick_first_str(
+                snapshot,
+                ["ad_group", "ad_group_name", "adGroupName", "name"],
+                f"adgroup_{ad_group_id}",
+            ),
+        )
+        key = (sponsored_type, campaign_id, ad_group_id)
+
+        clicks = int(float(item.get("clicks", item.get("click", 0)) or 0))
+        spend = float(item.get("cost", item.get("spend", 0)) or 0)
+        sales = float(
+            item.get(
+                "sales",
+                item.get(
+                    "same_sales",
+                    item.get("attributed_sales", 0),
+                ),
+            )
+            or 0
+        )
+
+        if key not in grouped:
+            grouped[key] = {
+                "ad_combo": ad_combo,
+                "sponsored_type": sponsored_type,
+                "campaign_id": campaign_id,
+                "campaign": campaign,
+                "ad_group_id": ad_group_id,
+                "ad_group": ad_group,
+                "clicks": 0,
+                "spend": 0.0,
+                "sales": 0.0,
+            }
+
+        grouped[key]["clicks"] += clicks
+        grouped[key]["spend"] += spend
+        grouped[key]["sales"] += sales
+
+    rows: List[Dict[str, Any]] = []
+    for (_, _, _), row in grouped.items():
+        spend = float(row["spend"])
+        if spend <= 0:
+            continue
+
+        sales = float(row["sales"])
+        acos = round((spend / sales) * 100, 2) if sales > 0 else 0.0
+
+        snapshot = snapshot_by_key.get((row["sponsored_type"], row["ad_group_id"]), {})
+        current_bid = _to_float(snapshot.get("current_bid"))
+        suggested_bid = _suggest_bid(current_bid=current_bid, acos=acos)
+
+        rows.append(
+            {
+                "ad_combo": row["ad_combo"],
+                "campaign_id": row["campaign_id"],
+                "campaign_name": str(row["campaign"]),
+                "campaign": str(row["campaign"]),
+                "ad_group_id": row["ad_group_id"],
+                "ad_group": row["ad_group"],
+                "current_bid": round(current_bid, 2) if current_bid is not None else None,
+                "suggested_bid": round(suggested_bid, 2) if suggested_bid is not None else None,
+                "clicks": int(row["clicks"]),
+                "spend": round(spend, 2),
+                "sales": round(sales, 2),
+                "acos": acos,
+            }
+        )
+
+    rows.sort(key=lambda x: (x["ad_combo"], x["campaign"], x["ad_group"]))
+    return rows
+
+
 def _extract_bid_change(log_row: Dict[str, Any]) -> Tuple[float, float, str] | None:
     before_items = log_row.get("operate_before") or []
     after_items = log_row.get("operate_after") or []
@@ -140,10 +300,23 @@ def _ensure_default_playbook(store_id: str, store_name: str) -> None:
     playbook_path = PLAYBOOK_DIR / f"store_playbook_{store_id}.json"
 
     if playbook_path.exists():
+        try:
+            existing = json.loads(playbook_path.read_text(encoding="utf-8"))
+            if isinstance(existing, dict):
+                existing_name = str(existing.get("store_name") or "").strip()
+                if existing_name != store_name:
+                    existing["store_name"] = store_name
+                    playbook_path.write_text(
+                        json.dumps(existing, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+        except (OSError, json.JSONDecodeError):
+            pass
         return
 
     default_playbook = {
         "store_id": store_id,
+        "store_name": store_name,
         "rules": {
             "negative_search_terms": "Conservative Negative Search Terms",
             "acos_limit": 45,
@@ -236,6 +409,7 @@ def _build_store_history_rows(
 
 
 def sync_lingxing_data(
+    store_id: str | None = None,
     report_date: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
@@ -254,6 +428,22 @@ def sync_lingxing_data(
         for item in sellers
         if int(item.get("status", 0) or 0) == 1 and int(item.get("has_ads_setting", 0) or 0) == 1
     ]
+    target_store_id = (store_id or "").strip()
+    if target_store_id:
+        if not target_store_id.startswith("lingxing_"):
+            raise ValueError(
+                "Lingxing sync supports Lingxing stores only. "
+                "Please use a store_id like lingxing_<sid>."
+            )
+
+        valid_sellers = [
+            item for item in valid_sellers if f"lingxing_{int(item['sid'])}" == target_store_id
+        ]
+        if not valid_sellers:
+            raise ValueError(
+                f"No Lingxing ads-enabled store matched store_id={target_store_id}. "
+                "Please confirm current store is linked in Lingxing and ads are enabled."
+            )
 
     store_results: List[Dict[str, Any]] = []
 
@@ -263,6 +453,7 @@ def sync_lingxing_data(
         store_name = str(seller.get("name") or store_id)
 
         daily_rows: List[Dict[str, Any]] = []
+        all_report_rows: List[Dict[str, Any]] = []
         for day in _date_iter(window.start_date, window.end_date):
             report_rows = client.fetch_ad_reports_for_day(
                 access_token=access_token,
@@ -270,6 +461,7 @@ def sync_lingxing_data(
                 report_date=day.isoformat(),
             )
             daily_rows.append(_aggregate_daily_metrics(report_rows, day, store_id))
+            all_report_rows.extend(report_rows)
 
         op_logs = client.fetch_operation_logs(
             access_token=access_token,
@@ -278,6 +470,7 @@ def sync_lingxing_data(
             end_date=window.end_date.isoformat(),
         )
         bid_snapshots = client.fetch_bid_snapshots(access_token=access_token, sid=sid)
+        campaign_name_map = client.fetch_campaign_names(access_token=access_token, sid=sid)
 
         history_rows = _build_store_history_rows(
             store_id=store_id,
@@ -302,6 +495,11 @@ def sync_lingxing_data(
             history_df=history_df,
             perf_df=perf_df,
         )
+        lingxing_output_rows = _build_lingxing_output_rows(
+            report_rows=all_report_rows,
+            bid_snapshots=bid_snapshots,
+            campaign_name_map=campaign_name_map,
+        )
 
         if persist:
             _persist_store_frames(store_id=store_id, perf_df=perf_df, history_df=history_df)
@@ -320,6 +518,7 @@ def sync_lingxing_data(
                 "operation_logs": len(op_logs),
                 "bid_snapshots": len(bid_snapshots),
                 "history_rows": len(history_rows),
+                "lingxing_output_rows": lingxing_output_rows,
                 "latest_performance": latest_perf,
                 "recommendations": recommendations,
                 "optimization_cases": cases,
@@ -327,6 +526,7 @@ def sync_lingxing_data(
         )
 
     return {
+        "target_store_id": target_store_id or None,
         "window": {
             "start_date": window.start_date.isoformat(),
             "end_date": window.end_date.isoformat(),
