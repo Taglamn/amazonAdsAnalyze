@@ -56,6 +56,12 @@ class StoreRepository:
         self._cache[store_id] = store
         return store
 
+    def invalidate(self, store_id: str | None = None) -> None:
+        if store_id is None:
+            self._cache.clear()
+            return
+        self._cache.pop(store_id, None)
+
     @staticmethod
     def _validate_store(perf_df: pd.DataFrame, history_df: pd.DataFrame, store_id: str) -> None:
         perf_required = {"store_id", "date", "clicks", "spend", "acos", "sales"}

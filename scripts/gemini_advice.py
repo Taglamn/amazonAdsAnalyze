@@ -13,6 +13,7 @@ from app.gemini_bridge import (
     normalize_language,
     validate_metrics_store,
 )
+from app.whitepaper_store import load_whitepaper
 
 
 def pick_metrics(store_id: str, target_date: str | None) -> Dict[str, Any]:
@@ -46,7 +47,11 @@ def main() -> None:
         required=False,
         help="Metrics date in YYYY-MM-DD. Defaults to latest available date.",
     )
-    parser.add_argument("--model", default="gemini-1.5-flash", help="Gemini model name")
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Gemini model name. Defaults to GEMINI_MODEL (or gemini-2.5-flash).",
+    )
     parser.add_argument("--lang", default="zh", help="Output language: zh or en")
     args = parser.parse_args()
 
@@ -56,11 +61,17 @@ def main() -> None:
 
     # Strict tenant isolation check before Gemini call.
     validate_metrics_store(metrics, args.store_id)
+    whitepaper = load_whitepaper(args.store_id)
+    if not whitepaper:
+        raise ValueError(
+            f"No stored whitepaper for {args.store_id}. Generate or import whitepaper before requesting advice."
+        )
 
     prompt = build_advice_prompt(
         store_id=args.store_id,
         rules=playbook.get("rules", {}),
         metrics=metrics,
+        whitepaper_context=whitepaper,
         language=lang,
     )
 

@@ -3,10 +3,15 @@ from __future__ import annotations
 import json
 import os
 from datetime import date
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 from urllib import error, request
 
 from .data_access import PLAYBOOK_DIR
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional dependency
+    load_dotenv = None
 
 
 def load_playbook(store_id: str) -> Dict[str, Any]:
@@ -59,15 +64,28 @@ def build_advice_prompt(
     store_id: str,
     rules: Dict[str, Any],
     metrics: Dict[str, Any],
+    whitepaper_context: str = "",
     language: str = "zh",
 ) -> str:
     language = normalize_language(language)
 
+    whitepaper_part = ""
+    if whitepaper_context.strip():
+        whitepaper_part = (
+            "First read and strictly follow this store whitepaper before giving advice.\n"
+            "Store whitepaper:\n"
+            "<<WHITEPAPER_START>>\n"
+            f"{whitepaper_context}\n"
+            "<<WHITEPAPER_END>>\n"
+        )
+
     return (
         f"You are the expert for Store {store_id}. "
+        f"{whitepaper_part}"
         f"Based on these rules {json.dumps(rules, ensure_ascii=False)} and yesterday's metrics "
         f"{json.dumps(metrics, ensure_ascii=False)}, provide 3 specific bid adjustments "
-        f"and 1 negative keyword suggestion. Return concise bullet points. "
+        f"and 1 negative keyword suggestion. "
+        "Return markdown with clear multi-line bullet points (not one line). "
         f"{_language_directive(language)}"
     )
 
@@ -98,18 +116,64 @@ def build_whitepaper_prompt(
     )
 
 
-def call_gemini(prompt: str, model: str = "gemini-1.5-flash") -> str:
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not set")
+def resolve_gemini_model(model: str | None = None) -> str:
+    if load_dotenv is not None:
+        load_dotenv()
 
+    resolved = (model or "").strip() or os.getenv("GEMINI_MODEL", "").strip() or "gemini-2.5-flash"
+    return resolved
+
+
+def resolve_max_output_tokens() -> int:
+    if load_dotenv is not None:
+        load_dotenv()
+
+    raw = os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "").strip()
+    if not raw:
+        return 4096
+    try:
+        value = int(raw)
+    except ValueError:
+        return 4096
+    return max(256, value)
+
+
+def resolve_gemini_continuation_rounds() -> int:
+    if load_dotenv is not None:
+        load_dotenv()
+
+    raw = os.getenv("GEMINI_CONTINUATION_ROUNDS", "").strip()
+    if not raw:
+        return 2
+    try:
+        value = int(raw)
+    except ValueError:
+        return 2
+    return max(0, min(5, value))
+
+
+def _normalize_gemini_text(text: str) -> str:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    if "\\n" in normalized:
+        normalized = normalized.replace("\\n", "\n")
+    if "\\t" in normalized:
+        normalized = normalized.replace("\\t", "\t")
+    return normalized
+
+
+def _call_gemini_once(
+    prompt: str,
+    resolved_model: str,
+    api_key: str,
+    max_output_tokens: int,
+) -> Tuple[str, str | None, Dict[str, Any]]:
     endpoint = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        f"https://generativelanguage.googleapis.com/v1beta/models/{resolved_model}:generateContent?key={api_key}"
     )
 
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1024},
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": max_output_tokens},
     }
 
     req = request.Request(
@@ -120,7 +184,7 @@ def call_gemini(prompt: str, model: str = "gemini-1.5-flash") -> str:
     )
 
     try:
-        with request.urlopen(req, timeout=40) as resp:
+        with request.urlopen(req, timeout=60) as resp:
             response_json = json.loads(resp.read().decode("utf-8"))
     except error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="ignore")
@@ -132,10 +196,103 @@ def call_gemini(prompt: str, model: str = "gemini-1.5-flash") -> str:
     if not candidates:
         raise RuntimeError(f"Gemini API returned no candidates: {response_json}")
 
-    parts = candidates[0].get("content", {}).get("parts", [])
+    first_candidate = candidates[0]
+    parts = first_candidate.get("content", {}).get("parts", [])
     text = "\n".join(part.get("text", "") for part in parts if part.get("text"))
     if not text:
         raise RuntimeError(f"Gemini API returned empty text: {response_json}")
+
+    usage = response_json.get("usageMetadata") or {}
+    finish_reason = first_candidate.get("finishReason")
+    return _normalize_gemini_text(text), finish_reason, usage
+
+
+def _append_without_overlap(current: str, extra: str) -> str:
+    base = current.rstrip()
+    incoming = extra.lstrip()
+    if not base:
+        return incoming
+    if not incoming:
+        return base
+
+    max_overlap = min(len(base), len(incoming), 400)
+    overlap = 0
+    for size in range(max_overlap, 0, -1):
+        if base[-size:] == incoming[:size]:
+            overlap = size
+            break
+
+    merged = base + "\n" + incoming[overlap:].lstrip()
+    return merged
+
+
+def call_gemini_with_meta(prompt: str, model: str | None = None) -> Tuple[str, Dict[str, Any]]:
+    if load_dotenv is not None:
+        load_dotenv()
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY is not set")
+
+    resolved_model = resolve_gemini_model(model)
+    max_output_tokens = resolve_max_output_tokens()
+    continuation_rounds = resolve_gemini_continuation_rounds()
+
+    text, finish_reason, usage = _call_gemini_once(
+        prompt=prompt,
+        resolved_model=resolved_model,
+        api_key=api_key,
+        max_output_tokens=max_output_tokens,
+    )
+
+    finish_reasons = [finish_reason]
+    total_prompt_tokens = int(usage.get("promptTokenCount", 0) or 0)
+    total_candidate_tokens = int(usage.get("candidatesTokenCount", 0) or 0)
+    total_tokens = int(usage.get("totalTokenCount", 0) or 0)
+
+    round_count = 1
+    while round_count <= continuation_rounds and finish_reason == "MAX_TOKENS":
+        continue_prompt = (
+            "Continue the same response from exactly where it stopped.\n"
+            "Do not repeat prior sentences.\n"
+            "Return only the continuation text.\n\n"
+            f"Original request:\n{prompt}\n\n"
+            f"Current partial response:\n{text}\n"
+        )
+
+        extra_text, finish_reason, extra_usage = _call_gemini_once(
+            prompt=continue_prompt,
+            resolved_model=resolved_model,
+            api_key=api_key,
+            max_output_tokens=max_output_tokens,
+        )
+
+        text = _append_without_overlap(text, extra_text)
+        finish_reasons.append(finish_reason)
+        total_prompt_tokens += int(extra_usage.get("promptTokenCount", 0) or 0)
+        total_candidate_tokens += int(extra_usage.get("candidatesTokenCount", 0) or 0)
+        total_tokens += int(extra_usage.get("totalTokenCount", 0) or 0)
+        round_count += 1
+
+    meta: Dict[str, Any] = {
+        "model": resolved_model,
+        "max_output_tokens": max_output_tokens,
+        "continuation_rounds": continuation_rounds,
+        "rounds_used": len(finish_reasons),
+        "finish_reason": finish_reasons[-1],
+        "finish_reasons": finish_reasons,
+        "prompt_token_count": total_prompt_tokens,
+        "candidates_token_count": total_candidate_tokens,
+        "total_token_count": total_tokens,
+        "char_count": len(text),
+        "line_count": text.count("\n") + 1,
+    }
+
+    return text, meta
+
+
+def call_gemini(prompt: str, model: str | None = None) -> str:
+    text, _ = call_gemini_with_meta(prompt=prompt, model=model)
 
     return text
 
