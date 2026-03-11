@@ -19,14 +19,24 @@ class IncomingBuyerMessage:
 
 
 class AmazonSPMessagingClient:
+    """Minimal SP-API messaging client for fetching and sending buyer messages."""
+
     def __init__(self, settings: CustomerServiceSettings | None = None) -> None:
         self.settings = settings or get_customer_service_settings()
 
-    def fetch_buyer_messages(self) -> list[IncomingBuyerMessage]:
-        payload = self._request_json("GET", self.settings.sp_api_list_messages_path)
+    def fetch_buyer_messages(self, external_store_id: str | None = None) -> list[IncomingBuyerMessage]:
+        """Fetch buyer messages from SP-API; optionally append store filter param."""
+
+        extra_query: dict[str, str] = {}
+        if external_store_id:
+            extra_query["storeId"] = external_store_id
+
+        payload = self._request_json("GET", self.settings.sp_api_list_messages_path, query=extra_query)
         return self._extract_messages(payload)
 
     def send_reply(self, conversation_id: str, reply: str) -> dict[str, Any]:
+        """Send a buyer-message reply via SP-API."""
+
         raw_path = self.settings.sp_api_send_message_path
         if "{conversation_id}" in raw_path:
             path = raw_path.format(conversation_id=conversation_id)
@@ -38,7 +48,16 @@ class AmazonSPMessagingClient:
         }
         return self._request_json("POST", path, body=body)
 
-    def _request_json(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        body: dict[str, Any] | None = None,
+        query: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Issue an HTTP request to SP-API and parse JSON object response."""
+
         token = self.settings.sp_api_access_token
         if not token:
             raise SPAPIError("CUSTOMER_SERVICE_SP_API_ACCESS_TOKEN is not set")
@@ -47,10 +66,15 @@ class AmazonSPMessagingClient:
         final_path = path if path.startswith("/") else f"/{path}"
         url = f"{base_url}{final_path}"
 
-        if method.upper() == "GET" and self.settings.sp_api_marketplace_id:
-            query = parse.urlencode({"marketplaceIds": self.settings.sp_api_marketplace_id})
+        query_dict: dict[str, str] = {}
+        if self.settings.sp_api_marketplace_id and method.upper() == "GET":
+            query_dict["marketplaceIds"] = self.settings.sp_api_marketplace_id
+        if query:
+            query_dict.update(query)
+        if query_dict:
+            encoded_query = parse.urlencode(query_dict)
             connector = "&" if "?" in url else "?"
-            url = f"{url}{connector}{query}"
+            url = f"{url}{connector}{encoded_query}"
 
         data_bytes = None
         headers = {
@@ -84,6 +108,8 @@ class AmazonSPMessagingClient:
         return parsed_payload
 
     def _extract_messages(self, payload: dict[str, Any]) -> list[IncomingBuyerMessage]:
+        """Normalize possible payload shapes into internal incoming message list."""
+
         seen: set[tuple[str, str]] = set()
         normalized: list[IncomingBuyerMessage] = []
 
@@ -152,6 +178,8 @@ class AmazonSPMessagingClient:
 
     @staticmethod
     def _extract_message_text(payload: dict[str, Any]) -> str:
+        """Extract buyer message text from flexible key names."""
+
         for key in ("buyerMessage", "message", "text", "content", "body"):
             raw = payload.get(key)
             if raw is not None:
@@ -162,6 +190,8 @@ class AmazonSPMessagingClient:
 
     @staticmethod
     def _is_buyer_message(payload: dict[str, Any]) -> bool:
+        """Best-effort sender role filter."""
+
         sender = str(
             payload.get("senderType")
             or payload.get("sender")

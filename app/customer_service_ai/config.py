@@ -44,7 +44,8 @@ def get_customer_service_settings() -> CustomerServiceSettings:
     return CustomerServiceSettings(
         database_url=(
             os.getenv("CUSTOMER_SERVICE_DATABASE_URL", "").strip()
-            or "postgresql+psycopg2://postgres:postgres@localhost:5432/amazon_ads"
+            or os.getenv("DATABASE_URL", "").strip()
+            or "postgresql+psycopg2:///amazon_ads"
         ),
         redis_url=os.getenv("CUSTOMER_SERVICE_REDIS_URL", "redis://localhost:6379/0").strip(),
         llm_provider=llm_provider,

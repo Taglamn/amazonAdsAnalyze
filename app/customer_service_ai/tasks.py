@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.auth.models import Store
+
 from .auto_reply_engine import AutoReplyEngine
 from .db import SessionLocal, init_customer_service_schema
 from .human_review import HumanReviewEngine
@@ -19,22 +21,44 @@ from .sp_api import AmazonSPMessagingClient
 
 
 @celery_app.task(name="customer_service.fetch_buyer_messages")
-def fetch_buyer_messages_task(auto_process: bool = True) -> dict[str, Any]:
+def fetch_buyer_messages_task(
+    tenant_id: int,
+    store_id: int,
+    auto_process: bool = True,
+) -> dict[str, Any]:
+    """Fetch and optionally process messages for specific tenant/store."""
+
     init_customer_service_schema()
     db = SessionLocal()
     try:
         sp_client = AmazonSPMessagingClient()
-        sync_service = MessageSyncService(client=sp_client)
+        store = db.get(Store, store_id)
+        sync_service = MessageSyncService(
+            client=sp_client,
+            external_store_id=store.external_store_id if store is not None else None,
+        )
         storage_service = MessageStorageService()
-        result = fetch_and_store_messages(db=db, sync_service=sync_service, storage_service=storage_service)
+        result = fetch_and_store_messages(
+            db=db,
+            tenant_id=tenant_id,
+            store_id=store_id,
+            sync_service=sync_service,
+            storage_service=storage_service,
+        )
 
         processed = 0
         if auto_process:
             for message_id in result.new_message_ids:
-                process_message_task.delay(message_id=message_id)
+                process_message_task.delay(
+                    tenant_id=tenant_id,
+                    store_id=store_id,
+                    message_id=message_id,
+                )
                 processed += 1
 
         return {
+            "tenant_id": tenant_id,
+            "store_id": store_id,
             "fetched_count": result.fetched_count,
             "created_count": result.created_count,
             "processed_count": processed,
@@ -45,10 +69,14 @@ def fetch_buyer_messages_task(auto_process: bool = True) -> dict[str, Any]:
 
 @celery_app.task(name="customer_service.process_message")
 def process_message_task(
+    tenant_id: int,
+    store_id: int,
     message_id: int,
     force_regenerate: bool = False,
     allow_auto_send: bool = True,
 ) -> dict[str, Any]:
+    """Run AI pipeline for a message under tenant/store scope."""
+
     init_customer_service_schema()
     db = SessionLocal()
     try:
@@ -56,6 +84,8 @@ def process_message_task(
         result = process_message_pipeline(
             db=db,
             message_id=message_id,
+            tenant_id=tenant_id,
+            store_id=store_id,
             llm=CustomerServiceLLM(),
             classification_service=MessageClassificationService(),
             sentiment_service=SentimentAnalysisService(),
@@ -70,6 +100,8 @@ def process_message_task(
         )
 
         return {
+            "tenant_id": tenant_id,
+            "store_id": store_id,
             "message_id": result.message.id,
             "status": result.message.status,
             "category": result.pipeline.category,
@@ -85,7 +117,9 @@ def process_message_task(
 
 
 @celery_app.task(name="customer_service.send_approved_reply")
-def send_approved_reply_task(message_id: int) -> dict[str, Any]:
+def send_approved_reply_task(tenant_id: int, store_id: int, message_id: int) -> dict[str, Any]:
+    """Send approved reply for a scoped message."""
+
     init_customer_service_schema()
     db = SessionLocal()
     try:
@@ -93,9 +127,13 @@ def send_approved_reply_task(message_id: int) -> dict[str, Any]:
         message, sp_result = send_approved_reply(
             db=db,
             message_id=message_id,
+            tenant_id=tenant_id,
+            store_id=store_id,
             send_service=MessageSendService(client=sp_client),
         )
         return {
+            "tenant_id": tenant_id,
+            "store_id": store_id,
             "message_id": message.id,
             "status": message.status,
             "sp_api_result": sp_result,

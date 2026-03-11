@@ -65,6 +65,7 @@ class ContextExportJobManager:
         )
         return {
             "job_id": job.job_id,
+            "store_id": job.store_id,
             "status": job.status,
             "progress_pct": int(job.progress_pct),
             "stage": job.stage,
@@ -238,6 +239,7 @@ class ContextExportJobManager:
             if not job:
                 return None
             return {
+                "store_id": job.store_id,
                 "status": job.status,
                 "file_path": job.file_path,
                 "filename": job.filename,

@@ -404,11 +404,12 @@ def _build_inventory_rows(
 def incremental_sync_store(
     store_id: str,
     persist_csv: bool = True,
+    credentials: LingxingCredentials | None = None,
 ) -> Dict[str, Any]:
     logger.info("incremental_sync_start store_id=%s", store_id)
 
-    credentials = LingxingCredentials.from_env()
-    client = LingxingClient(credentials=credentials)
+    effective_credentials = credentials or LingxingCredentials.from_env()
+    client = LingxingClient(credentials=effective_credentials)
     access_token = client.generate_access_token()
 
     sellers = client.list_sellers(access_token=access_token)

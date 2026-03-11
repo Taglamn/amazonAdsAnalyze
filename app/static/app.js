@@ -6,6 +6,9 @@ const html = htm.bind(React.createElement);
 
 const ADS_NAV_KEYS = ['dashboard', 'playbook', 'adGroups', 'history'];
 const AUTO_REPLY_NAV_KEYS = ['autoReplyMail'];
+const SETTINGS_NAV_KEYS = ['amazonMailConfig', 'userManagement'];
+const AUTH_TOKEN_KEY = 'auth_token';
+const AUTH_UNAUTHORIZED_EVENT = 'auth:unauthorized';
 
 const I18N = {
   en: {
@@ -18,22 +21,76 @@ const I18N = {
       adGroups: 'Ad Groups',
       history: 'Optimization History',
       autoReplyMail: 'Auto Reply Mail',
+      amazonMailConfig: 'Amazon Mail Config',
+      userManagement: 'User Management',
     },
     navGroup: {
       ads: 'Ads',
       autoReply: 'Auto Reply',
+      settings: 'Admin',
     },
     autoReply: {
       title: 'Auto Reply Mail',
       subtitle: 'Customer-service auto reply module for buyer messages.',
       tip: 'Use Customer Service APIs: fetch -> process -> review -> send.',
     },
+    amazonMail: {
+      accountCardTitle: 'Amazon Mail Account',
+      accountLabel: 'Amazon Email',
+      passwordLabel: 'Amazon Email Password',
+      passwordHint: 'Leave blank to keep existing password.',
+      hasPassword: 'Password configured',
+      noPassword: 'Password not configured',
+      sslEnabledLabel: 'Enable SSL Connection',
+      sslHostLabel: 'SSL Host',
+      sslPortLabel: 'SSL Port',
+      updatedAt: 'Last updated',
+      saveBtn: 'Save Account',
+      reloadBtn: 'Reload',
+      saveSuccess: 'Amazon mail account settings saved.',
+      accountRequired: 'Please enter Amazon email.',
+      passwordRequired: 'Please enter password or keep existing password.',
+      sslPortInvalid: 'SSL port must be between 1 and 65535.',
+    },
+    userMgmt: {
+      title: 'User Management',
+      onlyAdmin: 'Only admin can manage users.',
+      createTitle: 'Create User',
+      username: 'Username',
+      email: 'Email',
+      password: 'Password',
+      lingxingAccount: 'Lingxing Account',
+      lingxingPassword: 'Lingxing Password',
+      role: 'Role',
+      createBtn: 'Create',
+      listTitle: 'Users',
+      status: 'Status',
+      actions: 'Actions',
+      resetPwd: 'Reset Password',
+      saveRole: 'Save Role',
+      deactivate: 'Deactivate',
+      activate: 'Activate',
+      stores: 'Store Permissions',
+      reload: 'Reload',
+      updated: 'Updated',
+    },
     headerNote: 'All APIs enforce strict store-level data isolation.',
     storeSwitcher: 'Store Switcher',
     language: 'Language',
+    logout: 'Logout',
     loading: 'Loading...',
     requestFailed: 'Request failed',
     genericEmpty: 'No content returned.',
+    auth: {
+      loginTitle: 'Sign In',
+      loginSubtitle: 'Use your account to access store-scoped data.',
+      accountLabel: 'Username or Email',
+      accountPlaceholder: '',
+      passwordLabel: 'Password',
+      loginBtn: 'Login',
+      loggingIn: 'Signing in...',
+      invalid: 'Invalid account or password',
+    },
     status: {
       healthy: 'Healthy',
       warning: 'Warning',
@@ -134,22 +191,76 @@ const I18N = {
       adGroups: '广告组调优',
       history: '优化历史复盘',
       autoReplyMail: '自动回复邮件',
+      amazonMailConfig: 'Amazon 邮件账户配置',
+      userManagement: '用户管理',
     },
     navGroup: {
       ads: '广告',
       autoReply: '自动回复邮件',
+      settings: '管理员',
     },
     autoReply: {
       title: '自动回复邮件',
       subtitle: '买家消息客服自动回复模块。',
       tip: '使用客服 API 流程：拉取消息 -> AI 处理 -> 人工审核 -> 发送。',
     },
+    amazonMail: {
+      accountCardTitle: 'Amazon 邮件账户配置',
+      accountLabel: 'Amazon 邮箱',
+      passwordLabel: 'Amazon 邮箱密码',
+      passwordHint: '密码留空将保留当前已保存密码。',
+      hasPassword: '已配置密码',
+      noPassword: '未配置密码',
+      sslEnabledLabel: '启用 SSL 连接',
+      sslHostLabel: 'SSL 主机',
+      sslPortLabel: 'SSL 端口',
+      updatedAt: '最近更新时间',
+      saveBtn: '保存账户配置',
+      reloadBtn: '重新加载',
+      saveSuccess: 'Amazon 邮件账户配置已保存。',
+      accountRequired: '请填写 Amazon 邮箱。',
+      passwordRequired: '请填写密码，或保留已有密码。',
+      sslPortInvalid: 'SSL 端口必须在 1 到 65535 之间。',
+    },
+    userMgmt: {
+      title: '用户管理',
+      onlyAdmin: '仅管理员可管理用户。',
+      createTitle: '新增用户',
+      username: '用户名',
+      email: '邮箱',
+      password: '密码',
+      lingxingAccount: '领星账号',
+      lingxingPassword: '领星密码',
+      role: '角色',
+      createBtn: '创建',
+      listTitle: '用户列表',
+      status: '状态',
+      actions: '操作',
+      resetPwd: '重置密码',
+      saveRole: '保存角色',
+      deactivate: '停用',
+      activate: '启用',
+      stores: '店铺权限',
+      reload: '刷新',
+      updated: '已更新',
+    },
     headerNote: '所有接口均按店铺维度隔离，避免跨店数据混用。',
     storeSwitcher: '店铺切换',
     language: '语言',
+    logout: '退出登录',
     loading: '正在加载...',
     requestFailed: '请求失败',
     genericEmpty: '未返回内容。',
+    auth: {
+      loginTitle: '登录系统',
+      loginSubtitle: '请使用账号访问已授权店铺数据。',
+      accountLabel: '用户名或邮箱',
+      accountPlaceholder: '',
+      passwordLabel: '密码',
+      loginBtn: '登录',
+      loggingIn: '登录中...',
+      invalid: '账号或密码错误',
+    },
     status: {
       healthy: '健康',
       warning: '预警',
@@ -241,6 +352,42 @@ const I18N = {
     },
   },
 };
+
+function getStoredAuthToken() {
+  try {
+    return window.localStorage.getItem(AUTH_TOKEN_KEY) || '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function setStoredAuthToken(token) {
+  try {
+    if (token) {
+      window.localStorage.setItem(AUTH_TOKEN_KEY, token);
+    } else {
+      window.localStorage.removeItem(AUTH_TOKEN_KEY);
+    }
+  } catch (_) {
+    // Ignore localStorage failures.
+  }
+}
+
+function notifyUnauthorized() {
+  window.dispatchEvent(new CustomEvent(AUTH_UNAUTHORIZED_EVENT));
+}
+
+function withAuthHeaders(headers = {}, includeJson = false) {
+  const merged = { ...headers };
+  const token = getStoredAuthToken();
+  if (token && !merged.Authorization) {
+    merged.Authorization = `Bearer ${token}`;
+  }
+  if (includeJson && !merged['Content-Type']) {
+    merged['Content-Type'] = 'application/json';
+  }
+  return merged;
+}
 
 function getDefaultLanguage() {
   try {
@@ -375,7 +522,18 @@ function TextOutputBlock({ title, text, emptyText, meta, expanded, onToggle, onE
 }
 
 async function fetchJson(url, options, requestFailedText) {
-  const res = await fetch(url, options);
+  const finalOptions = options ? { ...options } : {};
+  const isLoginApi = String(url).includes('/api/auth/login');
+  const isRegisterApi = String(url).includes('/api/auth/register');
+  if (!isLoginApi && !isRegisterApi) {
+    finalOptions.headers = withAuthHeaders(finalOptions.headers || {});
+  }
+
+  const res = await fetch(url, finalOptions);
+  if (res.status === 401) {
+    setStoredAuthToken('');
+    notifyUnauthorized();
+  }
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
     const err = detail?.detail || `${requestFailedText}: ${res.status}`;
@@ -591,6 +749,13 @@ function LingxingSyncTable({ rows, t, language, sortKey, sortDir, onSort }) {
 function App() {
   const [language, setLanguage] = useState(getDefaultLanguage());
   const t = useMemo(() => I18N[language], [language]);
+  const [authToken, setAuthToken] = useState(getStoredAuthToken());
+  const [authUser, setAuthUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [loginAccount, setLoginAccount] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState('');
 
   const [stores, setStores] = useState([]);
   const [selectedStore, setSelectedStore] = useState('');
@@ -615,6 +780,30 @@ function App() {
   const [syncStartDate, setSyncStartDate] = useState('');
   const [syncEndDate, setSyncEndDate] = useState('');
   const [contextJobStatus, setContextJobStatus] = useState(null);
+  const [amazonEmailAccount, setAmazonEmailAccount] = useState('');
+  const [amazonEmailPassword, setAmazonEmailPassword] = useState('');
+  const [amazonEmailHasPassword, setAmazonEmailHasPassword] = useState(false);
+  const [amazonSslEnabled, setAmazonSslEnabled] = useState(false);
+  const [amazonSslHost, setAmazonSslHost] = useState('');
+  const [amazonSslPort, setAmazonSslPort] = useState('993');
+  const [amazonEmailUpdatedAt, setAmazonEmailUpdatedAt] = useState('');
+  const [autoReplyNotice, setAutoReplyNotice] = useState('');
+  const [autoReplyLoading, setAutoReplyLoading] = useState(false);
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [adminStores, setAdminStores] = useState([]);
+  const [userStoreAccessMap, setUserStoreAccessMap] = useState({});
+  const [userRoleDrafts, setUserRoleDrafts] = useState({});
+  const [userPasswordDrafts, setUserPasswordDrafts] = useState({});
+  const [userLingxingAccountDrafts, setUserLingxingAccountDrafts] = useState({});
+  const [userLingxingPasswordDrafts, setUserLingxingPasswordDrafts] = useState({});
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminNotice, setAdminNotice] = useState('');
+  const [newUserUsername, setNewUserUsername] = useState('');
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [newUserLingxingAccount, setNewUserLingxingAccount] = useState('');
+  const [newUserLingxingPassword, setNewUserLingxingPassword] = useState('');
+  const [newUserRole, setNewUserRole] = useState('viewer');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -633,6 +822,307 @@ function App() {
   }, [t, language]);
 
   useEffect(() => {
+    const onUnauthorized = () => {
+      setAuthToken('');
+      setAuthUser(null);
+      setStores([]);
+      setSelectedStore('');
+      setError('');
+      setLoginError('');
+      setAuthLoading(false);
+    };
+    window.addEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauthorized);
+  }, []);
+
+  useEffect(() => {
+    if (!authToken) {
+      setAuthUser(null);
+      setAuthLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setAuthLoading(true);
+    fetchJson('/api/auth/me', undefined, t.requestFailed)
+      .then((me) => {
+        if (cancelled) return;
+        setAuthUser(me);
+        setLoginError('');
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setAuthToken('');
+        setAuthUser(null);
+        setLoginError(err.message || t.auth.invalid);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setAuthLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authToken, t.requestFailed, t.auth.invalid]);
+
+  const onLogin = async (event) => {
+    event.preventDefault();
+    const account = (loginAccount || '').trim();
+    if (!account || !loginPassword) {
+      setLoginError(t.auth.invalid);
+      return;
+    }
+
+    setLoginLoading(true);
+    setLoginError('');
+    try {
+      const data = await fetchJson(
+        '/api/auth/login',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            account,
+            password: loginPassword,
+          }),
+        },
+        t.requestFailed,
+      );
+      const token = data.access_token || '';
+      setStoredAuthToken(token);
+      setAuthToken(token);
+      setLoginPassword('');
+    } catch (err) {
+      setStoredAuthToken('');
+      setAuthToken('');
+      setLoginError(err.message || t.auth.invalid);
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const onLogout = () => {
+    setStoredAuthToken('');
+    setAuthToken('');
+    setAuthUser(null);
+    setStores([]);
+    setSelectedStore('');
+  };
+
+  const loadUserManagementData = async () => {
+    if (!authUser || authUser.role !== 'admin') return;
+    setAdminLoading(true);
+    setAdminNotice('');
+    setError('');
+    try {
+      const [usersResp, storesResp] = await Promise.all([
+        fetchJson('/api/auth/users', undefined, t.requestFailed),
+        fetchJson('/api/stores?include_bound=true', undefined, t.requestFailed),
+      ]);
+
+      const users = usersResp.items || [];
+      const storesList = normalizeStores(storesResp.stores || storesResp.store_ids || []);
+      const storeAccessEntries = await Promise.all(
+        users.map(async (user) => {
+          const accessResp = await fetchJson(
+            `/api/auth/users/${user.user_id}/stores`,
+            undefined,
+            t.requestFailed,
+          );
+          const accessMap = {};
+          (accessResp.stores || []).forEach((s) => {
+            accessMap[s.external_store_id] = true;
+          });
+          return [user.user_id, accessMap];
+        }),
+      );
+
+      setAdminUsers(users);
+      setAdminStores(storesList);
+      setUserStoreAccessMap(Object.fromEntries(storeAccessEntries));
+      setUserRoleDrafts(
+        Object.fromEntries(users.map((u) => [u.user_id, u.role || 'viewer'])),
+      );
+      setUserPasswordDrafts({});
+      setUserLingxingAccountDrafts(
+        Object.fromEntries(users.map((u) => [u.user_id, u.lingxing_erp_username || ''])),
+      );
+      setUserLingxingPasswordDrafts({});
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const onCreateManagedUser = async () => {
+    if (
+      !newUserUsername.trim() ||
+      !newUserEmail.trim() ||
+      !newUserPassword ||
+      !newUserLingxingAccount.trim() ||
+      !newUserLingxingPassword
+    ) {
+      setError(t.requestFailed);
+      return;
+    }
+    setAdminLoading(true);
+    setAdminNotice('');
+    setError('');
+    try {
+      await fetchJson(
+        '/api/auth/users',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: newUserUsername.trim(),
+            email: newUserEmail.trim(),
+            password: newUserPassword,
+            lingxing_erp_username: newUserLingxingAccount.trim(),
+            lingxing_erp_password: newUserLingxingPassword,
+            role: newUserRole,
+          }),
+        },
+        t.requestFailed,
+      );
+      setNewUserUsername('');
+      setNewUserEmail('');
+      setNewUserPassword('');
+      setNewUserLingxingAccount('');
+      setNewUserLingxingPassword('');
+      setNewUserRole('viewer');
+      setAdminNotice(t.userMgmt.updated);
+      await loadUserManagementData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const onSaveManagedUserRole = async (userId) => {
+    const role = userRoleDrafts[userId] || 'viewer';
+    setAdminLoading(true);
+    setAdminNotice('');
+    setError('');
+    try {
+      await fetchJson(
+        `/api/auth/users/${userId}/role`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role }),
+        },
+        t.requestFailed,
+      );
+      setAdminNotice(t.userMgmt.updated);
+      await loadUserManagementData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const onResetManagedUserPassword = async (userId) => {
+    const newPassword = userPasswordDrafts[userId] || '';
+    const lingxingAccount = (userLingxingAccountDrafts[userId] || '').trim();
+    const lingxingPassword = userLingxingPasswordDrafts[userId] || '';
+    const originalUser = adminUsers.find((item) => item.user_id === userId);
+    const originalLingxingAccount = String(originalUser?.lingxing_erp_username || '').trim();
+    const accountChanged = lingxingAccount !== originalLingxingAccount;
+    if (!newPassword && !lingxingPassword && !accountChanged) return;
+    setAdminLoading(true);
+    setAdminNotice('');
+    setError('');
+    try {
+      await fetchJson(
+        `/api/auth/users/${userId}/password`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            new_password: newPassword || undefined,
+            lingxing_erp_username: lingxingAccount || undefined,
+            lingxing_erp_password: lingxingPassword || undefined,
+          }),
+        },
+        t.requestFailed,
+      );
+      setUserPasswordDrafts((prev) => ({ ...prev, [userId]: '' }));
+      setUserLingxingPasswordDrafts((prev) => ({ ...prev, [userId]: '' }));
+      setAdminNotice(t.userMgmt.updated);
+      await loadUserManagementData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const onToggleManagedUserStatus = async (user) => {
+    const nextStatus = user.status === 'active' ? 'inactive' : 'active';
+    setAdminLoading(true);
+    setAdminNotice('');
+    setError('');
+    try {
+      await fetchJson(
+        `/api/auth/users/${user.user_id}/status`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: nextStatus }),
+        },
+        t.requestFailed,
+      );
+      setAdminNotice(t.userMgmt.updated);
+      await loadUserManagementData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const onToggleManagedStoreAccess = async (userId, store) => {
+    const hasAccess = Boolean(userStoreAccessMap?.[userId]?.[store.store_id]);
+    setAdminLoading(true);
+    setAdminNotice('');
+    setError('');
+    try {
+      if (hasAccess) {
+        await fetchJson(
+          `/api/auth/users/${userId}/stores/${encodeURIComponent(store.store_id)}`,
+          { method: 'DELETE' },
+          t.requestFailed,
+        );
+      } else {
+        await fetchJson(
+          `/api/auth/users/${userId}/stores`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              external_store_id: store.store_id,
+              store_name: store.store_name,
+            }),
+          },
+          t.requestFailed,
+        );
+      }
+      setAdminNotice(t.userMgmt.updated);
+      await loadUserManagementData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!authUser) return;
     fetchJson('/api/stores?include_bound=true', undefined, I18N.en.requestFailed)
       .then((data) => {
         const options = normalizeStores(data.stores || data.store_ids || []);
@@ -643,10 +1133,10 @@ function App() {
         }
       })
       .catch((err) => setError(err.message));
-  }, []);
+  }, [authUser]);
 
   useEffect(() => {
-    if (!selectedStore) return;
+    if (!authUser || !selectedStore) return;
     setContextJobStatus(null);
     const selectedOption = stores.find((item) => item.store_id === selectedStore);
     if (selectedOption && !selectedOption.has_local_data) {
@@ -718,6 +1208,7 @@ function App() {
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [
+    authUser,
     selectedStore,
     stores,
     t.requestFailed,
@@ -726,6 +1217,92 @@ function App() {
     t.playbook.whitepaperStorageEmpty,
     t.playbook.storeNotSyncedHint,
   ]);
+
+  const loadAmazonEmailSettings = async () => {
+    setAutoReplyLoading(true);
+    setError('');
+    setAutoReplyNotice('');
+    try {
+      const data = await fetchJson('/api/customer-service/settings/amazon-email', undefined, t.requestFailed);
+      setAmazonEmailAccount(data.email_account || '');
+      setAmazonEmailHasPassword(Boolean(data.has_password));
+      setAmazonSslEnabled(Boolean(data.ssl_enabled));
+      setAmazonSslHost(data.ssl_host || '');
+      setAmazonSslPort(String(data.ssl_port || 993));
+      setAmazonEmailUpdatedAt(data.updated_at || '');
+      setAmazonEmailPassword('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAutoReplyLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!authUser || view !== 'amazonMailConfig') return;
+    loadAmazonEmailSettings();
+  }, [authUser, view]);
+
+  useEffect(() => {
+    if (!authUser || authUser.role !== 'admin' || view !== 'userManagement') return;
+    loadUserManagementData();
+  }, [authUser, view]);
+
+  const onSaveAmazonEmailSettings = async () => {
+    const account = (amazonEmailAccount || '').trim();
+    if (!account) {
+      setError(t.amazonMail.accountRequired);
+      return;
+    }
+
+    const passwordInput = amazonEmailPassword || '';
+    if (!passwordInput.trim() && !amazonEmailHasPassword) {
+      setError(t.amazonMail.passwordRequired);
+      return;
+    }
+
+    const sslPortNum = Number(amazonSslPort);
+    if (!Number.isInteger(sslPortNum) || sslPortNum < 1 || sslPortNum > 65535) {
+      setError(t.amazonMail.sslPortInvalid);
+      return;
+    }
+
+    setAutoReplyLoading(true);
+    setError('');
+    setAutoReplyNotice('');
+    try {
+      const payload = {
+        email_account: account,
+        email_password: passwordInput,
+        keep_existing_password: !passwordInput.trim(),
+        ssl_enabled: Boolean(amazonSslEnabled),
+        ssl_host: amazonSslHost,
+        ssl_port: sslPortNum,
+      };
+      const data = await fetchJson(
+        '/api/customer-service/settings/amazon-email',
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        },
+        t.requestFailed,
+      );
+
+      setAmazonEmailAccount(data.email_account || account);
+      setAmazonEmailHasPassword(Boolean(data.has_password));
+      setAmazonSslEnabled(Boolean(data.ssl_enabled));
+      setAmazonSslHost(data.ssl_host || '');
+      setAmazonSslPort(String(data.ssl_port || sslPortNum));
+      setAmazonEmailUpdatedAt(data.updated_at || '');
+      setAmazonEmailPassword('');
+      setAutoReplyNotice(t.amazonMail.saveSuccess);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAutoReplyLoading(false);
+    }
+  };
 
   const onGenerateWhitepaper = async () => {
     if (!selectedStore) return;
@@ -835,8 +1412,13 @@ function App() {
 
       const response = await fetch('/api/ai/upload-analysis', {
         method: 'POST',
+        headers: withAuthHeaders(),
         body: formData,
       });
+      if (response.status === 401) {
+        setStoredAuthToken('');
+        notifyUnauthorized();
+      }
 
       let payload = {};
       try {
@@ -974,6 +1556,10 @@ function App() {
         }
 
         const downloadResp = await fetch(`/api/lingxing/context-package/jobs/${jobId}/download`);
+        if (downloadResp.status === 401) {
+          setStoredAuthToken('');
+          notifyUnauthorized();
+        }
         if (!downloadResp.ok) {
           const detail = await downloadResp.json().catch(() => ({}));
           throw new Error(detail?.detail || `${t.requestFailed}: ${downloadResp.status}`);
@@ -1015,8 +1601,13 @@ function App() {
       formData.append('file', whitepaperFile);
       const response = await fetch(`/api/stores/${selectedStore}/whitepaper/import`, {
         method: 'POST',
+        headers: withAuthHeaders(),
         body: formData,
       });
+      if (response.status === 401) {
+        setStoredAuthToken('');
+        notifyUnauthorized();
+      }
 
       let payload = {};
       try {
@@ -1059,7 +1650,13 @@ function App() {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch(`/api/stores/${selectedStore}/whitepaper/export`);
+      const response = await fetch(`/api/stores/${selectedStore}/whitepaper/export`, {
+        headers: withAuthHeaders(),
+      });
+      if (response.status === 401) {
+        setStoredAuthToken('');
+        notifyUnauthorized();
+      }
       if (!response.ok) {
         const detail = await response.json().catch(() => ({}));
         throw new Error(detail?.detail || `${t.requestFailed}: ${response.status}`);
@@ -1076,6 +1673,71 @@ function App() {
       setLoading(false);
     }
   };
+
+  if (authLoading) {
+    return html`
+      <div className="flex min-h-screen items-center justify-center bg-brand-50 p-6">
+        <div className="rounded-xl border border-brand-100 bg-white px-6 py-5 text-sm text-brand-700 shadow-sm">${t.loading}</div>
+      </div>
+    `;
+  }
+
+  if (!authUser) {
+    return html`
+      <div className="flex min-h-screen items-center justify-center bg-brand-50 p-4">
+        <form className="w-full max-w-md rounded-2xl border border-brand-100 bg-white p-6 shadow-lg" onSubmit=${onLogin} autoComplete="on">
+          <div className="mb-4 flex items-center justify-between">
+            <h1 className="text-xl font-semibold text-brand-900">${t.auth.loginTitle}</h1>
+            <select
+              className="rounded-md border border-brand-200 px-2 py-1 text-sm"
+              value=${language}
+              onChange=${(e) => setLanguage(e.target.value)}
+            >
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+          <p className="mb-4 text-sm text-brand-600">${t.auth.loginSubtitle}</p>
+          <label className="mb-3 block">
+            <span className="mb-1 block text-xs font-medium text-brand-700">${t.auth.accountLabel}</span>
+            <input
+              type="text"
+              name="login_account"
+              autoComplete="username"
+              value=${loginAccount}
+              onChange=${(e) => setLoginAccount(e.target.value)}
+              className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
+              placeholder=${t.auth.accountPlaceholder}
+            />
+          </label>
+          <label className="mb-2 block">
+            <span className="mb-1 block text-xs font-medium text-brand-700">${t.auth.passwordLabel}</span>
+            <input
+              type="password"
+              name="login_password"
+              autoComplete="current-password"
+              value=${loginPassword}
+              onChange=${(e) => setLoginPassword(e.target.value)}
+              className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
+              placeholder="********"
+            />
+          </label>
+          ${loginError
+            ? html`<p className="mt-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">${loginError}</p>`
+            : null}
+          <button
+            type="submit"
+            disabled=${Boolean(loginLoading)}
+            className=${`mt-4 w-full rounded-md px-4 py-2 text-sm font-semibold ${
+              loginLoading ? 'cursor-not-allowed bg-brand-200 text-white' : 'bg-brand-700 text-white hover:bg-brand-800'
+            }`}
+          >
+            ${loginLoading ? t.auth.loggingIn : t.auth.loginBtn}
+          </button>
+        </form>
+      </div>
+    `;
+  }
 
   return html`
     <div className="min-h-screen md:flex">
@@ -1104,6 +1766,23 @@ function App() {
 
           <p className="mb-2 mt-4 px-2 text-xs font-semibold uppercase tracking-wide text-brand-300">${t.navGroup.autoReply}</p>
           ${AUTO_REPLY_NAV_KEYS.map(
+            (key) => html`
+              <button
+                key=${key}
+                onClick=${() => setView(key)}
+                className=${`mb-2 w-full rounded-lg px-3 py-2 text-left text-sm transition ${
+                  key === view
+                    ? 'bg-brand-600 text-white'
+                    : 'text-brand-100 hover:bg-brand-800'
+                }`}
+              >
+                ${t.nav[key]}
+              </button>
+            `,
+          )}
+
+          <p className="mb-2 mt-4 px-2 text-xs font-semibold uppercase tracking-wide text-brand-300">${t.navGroup.settings}</p>
+          ${SETTINGS_NAV_KEYS.map(
             (key) => html`
               <button
                 key=${key}
@@ -1151,6 +1830,13 @@ function App() {
                   html`<option key=${store.store_id} value=${store.store_id}>${store.store_name}</option>`,
               )}
             </select>
+            <span className="ml-2 rounded-md bg-brand-50 px-2 py-1 text-xs font-semibold text-brand-700">${authUser.username}</span>
+            <button
+              onClick=${onLogout}
+              className="rounded-md border border-brand-300 bg-white px-3 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50"
+            >
+              ${t.logout}
+            </button>
           </div>
         </header>
 
@@ -1350,6 +2036,324 @@ function App() {
                   <p className="mt-1 text-sm text-brand-600">${t.autoReply.subtitle}</p>
                   <p className="mt-3 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">${t.autoReply.tip}</p>
                 </div>
+              </section>
+            `
+          : null}
+
+        ${view === 'amazonMailConfig'
+          ? html`
+              <section className="space-y-4">
+                <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
+                  <h4 className="text-sm font-semibold">${t.amazonMail.accountCardTitle}</h4>
+
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-brand-700">${t.amazonMail.accountLabel}</span>
+                      <input
+                        type="email"
+                        name="amazon_email_account"
+                        autoComplete="off"
+                        value=${amazonEmailAccount}
+                        onChange=${(e) => setAmazonEmailAccount(e.target.value)}
+                        className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
+                        placeholder="seller@example.com"
+                      />
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-brand-700">${t.amazonMail.passwordLabel}</span>
+                      <input
+                        type="password"
+                        name="amazon_email_password"
+                        autoComplete="new-password"
+                        value=${amazonEmailPassword}
+                        onChange=${(e) => setAmazonEmailPassword(e.target.value)}
+                        className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
+                        placeholder="********"
+                      />
+                    </label>
+                  </div>
+
+                  <p className="mt-2 text-xs text-brand-600">${t.amazonMail.passwordHint}</p>
+                  <p className="mt-2 text-xs text-brand-700">
+                    ${amazonEmailHasPassword ? t.amazonMail.hasPassword : t.amazonMail.noPassword}
+                  </p>
+
+                  <div className="mt-4 rounded-lg border border-brand-100 bg-brand-50 p-3">
+                    <label className="inline-flex items-center gap-2 text-sm font-medium text-brand-800">
+                      <input
+                        type="checkbox"
+                        checked=${amazonSslEnabled}
+                        onChange=${(e) => setAmazonSslEnabled(Boolean(e.target.checked))}
+                      />
+                      <span>${t.amazonMail.sslEnabledLabel}</span>
+                    </label>
+
+                    <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <label className="block">
+                        <span className="mb-1 block text-xs font-medium text-brand-700">${t.amazonMail.sslHostLabel}</span>
+                        <input
+                          type="text"
+                          name="amazon_ssl_host"
+                          autoComplete="off"
+                          value=${amazonSslHost}
+                          onChange=${(e) => setAmazonSslHost(e.target.value)}
+                          disabled=${!amazonSslEnabled}
+                          className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm disabled:bg-brand-100 disabled:text-brand-400"
+                          placeholder="127.0.0.1"
+                        />
+                      </label>
+
+                      <label className="block">
+                        <span className="mb-1 block text-xs font-medium text-brand-700">${t.amazonMail.sslPortLabel}</span>
+                        <input
+                          type="number"
+                          name="amazon_ssl_port"
+                          autoComplete="off"
+                          min="1"
+                          max="65535"
+                          value=${amazonSslPort}
+                          onChange=${(e) => setAmazonSslPort(e.target.value)}
+                          disabled=${!amazonSslEnabled}
+                          className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm disabled:bg-brand-100 disabled:text-brand-400"
+                          placeholder="993"
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <p className="mt-3 text-xs text-brand-700">
+                    ${amazonEmailUpdatedAt ? `${t.amazonMail.updatedAt}: ${amazonEmailUpdatedAt}` : ''}
+                  </p>
+
+                  ${autoReplyNotice
+                    ? html`<p className="mt-3 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">${autoReplyNotice}</p>`
+                    : null}
+
+                  ${autoReplyLoading ? html`<p className="mt-3 text-sm text-brand-600">${t.loading}</p>` : null}
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      onClick=${onSaveAmazonEmailSettings}
+                      disabled=${Boolean(autoReplyLoading)}
+                      className=${`rounded-md px-4 py-2 text-sm font-semibold ${
+                        autoReplyLoading
+                          ? 'cursor-not-allowed bg-brand-200 text-white'
+                          : 'bg-brand-700 text-white hover:bg-brand-800'
+                      }`}
+                    >
+                      ${t.amazonMail.saveBtn}
+                    </button>
+                    <button
+                      onClick=${loadAmazonEmailSettings}
+                      disabled=${Boolean(autoReplyLoading)}
+                      className=${`rounded-md border px-4 py-2 text-sm font-semibold ${
+                        autoReplyLoading
+                          ? 'cursor-not-allowed border-brand-100 bg-brand-50 text-brand-300'
+                          : 'border-brand-300 bg-white text-brand-700 hover:bg-brand-50'
+                      }`}
+                    >
+                      ${t.amazonMail.reloadBtn}
+                    </button>
+                  </div>
+                </div>
+              </section>
+            `
+          : null}
+
+        ${view === 'userManagement'
+          ? html`
+              <section className="space-y-4">
+                ${authUser?.role !== 'admin'
+                  ? html`<div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">${t.userMgmt.onlyAdmin}</div>`
+                  : html`
+                      <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-base font-semibold">${t.userMgmt.createTitle}</h3>
+                          <button
+                            onClick=${loadUserManagementData}
+                            className="rounded-md border border-brand-300 bg-white px-3 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50"
+                          >
+                            ${t.userMgmt.reload}
+                          </button>
+                        </div>
+                        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-6">
+                          <input
+                            type="text"
+                            name="new_user_username"
+                            autoComplete="off"
+                            value=${newUserUsername}
+                            onChange=${(e) => setNewUserUsername(e.target.value)}
+                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
+                            placeholder=${t.userMgmt.username}
+                          />
+                          <input
+                            type="email"
+                            name="new_user_email"
+                            autoComplete="off"
+                            value=${newUserEmail}
+                            onChange=${(e) => setNewUserEmail(e.target.value)}
+                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
+                            placeholder=${t.userMgmt.email}
+                          />
+                          <input
+                            type="password"
+                            name="new_user_password"
+                            autoComplete="new-password"
+                            value=${newUserPassword}
+                            onChange=${(e) => setNewUserPassword(e.target.value)}
+                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
+                            placeholder=${t.userMgmt.password}
+                          />
+                          <input
+                            type="text"
+                            name="new_user_lingxing_account"
+                            autoComplete="off"
+                            value=${newUserLingxingAccount}
+                            onChange=${(e) => setNewUserLingxingAccount(e.target.value)}
+                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
+                            placeholder=${t.userMgmt.lingxingAccount}
+                          />
+                          <input
+                            type="password"
+                            name="new_user_lingxing_password"
+                            autoComplete="new-password"
+                            value=${newUserLingxingPassword}
+                            onChange=${(e) => setNewUserLingxingPassword(e.target.value)}
+                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
+                            placeholder=${t.userMgmt.lingxingPassword}
+                          />
+                          <select
+                            value=${newUserRole}
+                            onChange=${(e) => setNewUserRole(e.target.value)}
+                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
+                          >
+                            <option value="admin">admin</option>
+                            <option value="manager">manager</option>
+                            <option value="staff">staff</option>
+                            <option value="viewer">viewer</option>
+                          </select>
+                        </div>
+                        <button
+                          onClick=${onCreateManagedUser}
+                          disabled=${Boolean(adminLoading)}
+                          className=${`mt-3 rounded-md px-4 py-2 text-sm font-semibold ${
+                            adminLoading ? 'cursor-not-allowed bg-brand-200 text-white' : 'bg-brand-700 text-white hover:bg-brand-800'
+                          }`}
+                        >
+                          ${t.userMgmt.createBtn}
+                        </button>
+                        ${adminNotice
+                          ? html`<p className="mt-3 rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-800">${adminNotice}</p>`
+                          : null}
+                        ${adminLoading ? html`<p className="mt-2 text-sm text-brand-600">${t.loading}</p>` : null}
+                      </div>
+
+                      <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
+                        <h3 className="text-base font-semibold">${t.userMgmt.listTitle}</h3>
+                        <div className="mt-3 space-y-4">
+                          ${adminUsers.map(
+                            (user) => html`
+                              <article key=${user.user_id} className="rounded-lg border border-brand-100 p-3">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <div className="text-sm">
+                                    <div className="font-semibold">${user.username} (${user.email})</div>
+                                    <div className="text-brand-600">${t.userMgmt.status}: ${user.status}</div>
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <select
+                                      value=${userRoleDrafts[user.user_id] || user.role}
+                                      onChange=${(e) =>
+                                        setUserRoleDrafts((prev) => ({ ...prev, [user.user_id]: e.target.value }))}
+                                      className="rounded-md border border-brand-200 px-2 py-1 text-sm"
+                                    >
+                                      <option value="admin">admin</option>
+                                      <option value="manager">manager</option>
+                                      <option value="staff">staff</option>
+                                      <option value="viewer">viewer</option>
+                                    </select>
+                                    <button
+                                      onClick=${() => onSaveManagedUserRole(user.user_id)}
+                                      className="rounded-md border border-brand-300 bg-white px-3 py-1 text-sm font-semibold text-brand-700 hover:bg-brand-50"
+                                    >
+                                      ${t.userMgmt.saveRole}
+                                    </button>
+                                    <button
+                                      onClick=${() => onToggleManagedUserStatus(user)}
+                                      disabled=${authUser?.user_id === user.user_id}
+                                      className=${`rounded-md border px-3 py-1 text-sm font-semibold ${
+                                        authUser?.user_id === user.user_id
+                                          ? 'cursor-not-allowed border-brand-100 bg-brand-50 text-brand-300'
+                                          : 'border-brand-300 bg-white text-brand-700 hover:bg-brand-50'
+                                      }`}
+                                    >
+                                      ${user.status === 'active' ? t.userMgmt.deactivate : t.userMgmt.activate}
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-4">
+                                  <input
+                                    type="password"
+                                    name=${`reset_user_password_${user.user_id}`}
+                                    autoComplete="new-password"
+                                    value=${userPasswordDrafts[user.user_id] || ''}
+                                    onChange=${(e) =>
+                                      setUserPasswordDrafts((prev) => ({ ...prev, [user.user_id]: e.target.value }))}
+                                    className="rounded-md border border-brand-200 px-3 py-1 text-sm"
+                                    placeholder=${t.userMgmt.password}
+                                  />
+                                  <input
+                                    type="text"
+                                    name=${`reset_user_lingxing_account_${user.user_id}`}
+                                    autoComplete="off"
+                                    value=${userLingxingAccountDrafts[user.user_id] || ''}
+                                    onChange=${(e) =>
+                                      setUserLingxingAccountDrafts((prev) => ({ ...prev, [user.user_id]: e.target.value }))}
+                                    className="rounded-md border border-brand-200 px-3 py-1 text-sm"
+                                    placeholder=${t.userMgmt.lingxingAccount}
+                                  />
+                                  <input
+                                    type="password"
+                                    name=${`reset_user_lingxing_password_${user.user_id}`}
+                                    autoComplete="new-password"
+                                    value=${userLingxingPasswordDrafts[user.user_id] || ''}
+                                    onChange=${(e) =>
+                                      setUserLingxingPasswordDrafts((prev) => ({ ...prev, [user.user_id]: e.target.value }))}
+                                    className="rounded-md border border-brand-200 px-3 py-1 text-sm"
+                                    placeholder=${t.userMgmt.lingxingPassword}
+                                  />
+                                  <button
+                                    onClick=${() => onResetManagedUserPassword(user.user_id)}
+                                    className="rounded-md border border-brand-300 bg-white px-3 py-1 text-sm font-semibold text-brand-700 hover:bg-brand-50 md:justify-self-start"
+                                  >
+                                    ${t.userMgmt.resetPwd}
+                                  </button>
+                                </div>
+
+                                <div className="mt-3">
+                                  <p className="mb-2 text-xs font-semibold text-brand-700">${t.userMgmt.stores}</p>
+                                  <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                                    ${adminStores.map(
+                                      (store) => html`
+                                        <label key=${`${user.user_id}_${store.store_id}`} className="inline-flex items-center gap-2 text-sm text-brand-800">
+                                          <input
+                                            type="checkbox"
+                                            checked=${Boolean(userStoreAccessMap?.[user.user_id]?.[store.store_id])}
+                                            onChange=${() => onToggleManagedStoreAccess(user.user_id, store)}
+                                          />
+                                          <span>${store.store_name}</span>
+                                        </label>
+                                      `,
+                                    )}
+                                  </div>
+                                </div>
+                              </article>
+                            `,
+                          )}
+                        </div>
+                      </div>
+                    `}
               </section>
             `
           : null}

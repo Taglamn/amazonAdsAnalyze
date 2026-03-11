@@ -4,13 +4,22 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from .analysis import build_bid_recommendations, build_optimization_cases
+from .auth.api import router as auth_router
+from .auth.bootstrap import init_auth_schema
+from .auth.config import get_auth_settings
+from .auth.crud import bulk_sync_stores, ensure_default_tenant, list_accessible_stores
+from .auth.database import SessionLocal, get_db_session
+from .auth.dependencies import enforce_store_access, get_current_user
+from .auth.middleware import JWTAuthMiddleware
+from .auth.models import User
 from .customer_service_ai.api import router as customer_service_router
 from .customer_service_ai.db import init_customer_service_schema
 from .context_export_jobs import context_export_job_manager
@@ -48,6 +57,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(JWTAuthMiddleware)
+app.include_router(auth_router)
 app.include_router(customer_service_router)
 logger = get_ops_logger()
 
@@ -55,9 +66,11 @@ logger = get_ops_logger()
 @app.on_event("startup")
 def on_startup() -> None:
     try:
+        init_auth_schema()
         init_customer_service_schema()
+        _bootstrap_default_tenant_stores()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("customer_service_schema_init_failed error=%s", exc)
+        logger.warning("auth_or_customer_service_schema_init_failed error=%s", exc)
 
 
 class AdviceRequest(BaseModel):
@@ -153,8 +166,23 @@ def _build_stored_text_meta(content: str) -> Dict[str, Any]:
     }
 
 
-def _list_lingxing_bound_stores() -> List[Dict[str, Any]]:
+def _resolve_lingxing_credentials(current_user: User) -> LingxingCredentials:
+    """Resolve user-scoped Lingxing ERP credentials plus global app settings."""
+
     credentials = LingxingCredentials.from_env()
+    erp_username = str(current_user.lingxing_erp_username or "").strip()
+    erp_password = str(current_user.lingxing_erp_password or "").strip()
+    if not erp_username or not erp_password:
+        raise ValueError(
+            "Current user has not configured Lingxing ERP account/password. "
+            "Please update them in User Management."
+        )
+    credentials.erp_username = erp_username
+    credentials.erp_password = erp_password
+    return credentials
+
+
+def _list_lingxing_bound_stores(credentials: LingxingCredentials) -> List[Dict[str, Any]]:
     client = LingxingClient(credentials=credentials)
     access_token = client.generate_access_token()
     sellers = client.list_sellers(access_token=access_token)
@@ -186,14 +214,48 @@ def _list_lingxing_bound_stores() -> List[Dict[str, Any]]:
     return stores
 
 
+def _bootstrap_default_tenant_stores() -> None:
+    """Ensure local store catalog exists in auth tables for default tenant."""
+
+    db = SessionLocal()
+    try:
+        settings = get_auth_settings()
+        tenant = ensure_default_tenant(db, settings.bootstrap_tenant_name)
+        local_stores = store_repo.list_stores()
+        bulk_sync_stores(
+            db,
+            tenant_id=tenant.tenant_id,
+            stores=[(item["store_id"], item["store_name"]) for item in local_stores],
+        )
+    finally:
+        db.close()
+
+
+def _ensure_store_scope(db: Session, current_user: User, store_id: str) -> None:
+    """Enforce store-level authorization for current user."""
+
+    enforce_store_access(db, current_user=current_user, external_store_id=store_id)
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/api/stores")
-def list_stores(include_bound: bool = True) -> Dict[str, Any]:
+def list_stores(
+    include_bound: bool = True,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
     local_stores = store_repo.list_stores()
+    bulk_sync_stores(
+        db,
+        tenant_id=current_user.tenant_id,
+        stores=[(item["store_id"], item["store_name"]) for item in local_stores],
+    )
+    visible_store_ids = {item.external_store_id for item in list_accessible_stores(db, user=current_user)}
+
     stores: List[Dict[str, Any]] = [
         {
             "store_id": item["store_id"],
@@ -202,12 +264,15 @@ def list_stores(include_bound: bool = True) -> Dict[str, Any]:
             "source": "local",
         }
         for item in local_stores
+        if item["store_id"] in visible_store_ids
     ]
 
     bound_error: Optional[str] = None
     if include_bound:
         try:
-            bound_stores = _list_lingxing_bound_stores()
+            bound_stores = _list_lingxing_bound_stores(
+                credentials=_resolve_lingxing_credentials(current_user)
+            )
             merged: Dict[str, Dict[str, Any]] = {item["store_id"]: item for item in stores}
             for item in bound_stores:
                 existing = merged.get(item["store_id"])
@@ -217,7 +282,8 @@ def list_stores(include_bound: bool = True) -> Dict[str, Any]:
                     existing["country"] = item.get("country")
                     existing["source"] = "local+lingxing_bound"
                 else:
-                    merged[item["store_id"]] = item
+                    if item["store_id"] in visible_store_ids:
+                        merged[item["store_id"]] = item
             stores = sorted(
                 merged.values(),
                 key=lambda x: str(x.get("store_name") or x.get("store_id")),
@@ -241,7 +307,13 @@ def _serialize_store_rows(store: Store) -> List[Dict[str, Any]]:
 
 
 @app.get("/api/stores/{store_id}/performance")
-def get_store_performance(store_id: str) -> Dict[str, Any]:
+def get_store_performance(
+    store_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    _ensure_store_scope(db, current_user, store_id)
+
     try:
         store = store_repo.get_store(store_id)
     except (FileNotFoundError, ValueError) as exc:
@@ -254,7 +326,13 @@ def get_store_performance(store_id: str) -> Dict[str, Any]:
 
 
 @app.get("/api/stores/{store_id}/optimization-cases")
-def get_optimization_cases(store_id: str) -> Dict[str, Any]:
+def get_optimization_cases(
+    store_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    _ensure_store_scope(db, current_user, store_id)
+
     try:
         store = store_repo.get_store(store_id)
     except (FileNotFoundError, ValueError) as exc:
@@ -269,7 +347,13 @@ def get_optimization_cases(store_id: str) -> Dict[str, Any]:
 
 
 @app.get("/api/stores/{store_id}/ad-group-recommendations")
-def get_ad_group_recommendations(store_id: str) -> Dict[str, Any]:
+def get_ad_group_recommendations(
+    store_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    _ensure_store_scope(db, current_user, store_id)
+
     try:
         store = store_repo.get_store(store_id)
     except (FileNotFoundError, ValueError) as exc:
@@ -284,7 +368,14 @@ def get_ad_group_recommendations(store_id: str) -> Dict[str, Any]:
 
 
 @app.post("/api/stores/{store_id}/ai/advice")
-def get_ai_advice(store_id: str, payload: AdviceRequest) -> Dict[str, Any]:
+def get_ai_advice(
+    store_id: str,
+    payload: AdviceRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    _ensure_store_scope(db, current_user, store_id)
+
     try:
         store = store_repo.get_store(store_id)
         playbook = load_playbook(store_id)
@@ -344,7 +435,14 @@ def get_ai_advice(store_id: str, payload: AdviceRequest) -> Dict[str, Any]:
 
 
 @app.post("/api/stores/{store_id}/ai/whitepaper")
-def get_ai_whitepaper(store_id: str, payload: WhitepaperRequest) -> Dict[str, Any]:
+def get_ai_whitepaper(
+    store_id: str,
+    payload: WhitepaperRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    _ensure_store_scope(db, current_user, store_id)
+
     try:
         store = store_repo.get_store(store_id)
         playbook = load_playbook(store_id)
@@ -381,14 +479,24 @@ def get_ai_whitepaper(store_id: str, payload: WhitepaperRequest) -> Dict[str, An
 
 
 @app.get("/api/stores/{store_id}/whitepaper")
-def get_store_whitepaper(store_id: str) -> Dict[str, Any]:
+def get_store_whitepaper(
+    store_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    _ensure_store_scope(db, current_user, store_id)
     return whitepaper_info(store_id)
 
 
 @app.post("/api/stores/{store_id}/whitepaper/import")
 async def import_store_whitepaper(
-    store_id: str, file: UploadFile = File(...)
+    store_id: str,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
 ) -> Dict[str, Any]:
+    _ensure_store_scope(db, current_user, store_id)
+
     if not file.filename:
         raise HTTPException(status_code=400, detail="Please upload a whitepaper file")
 
@@ -407,7 +515,13 @@ async def import_store_whitepaper(
 
 
 @app.get("/api/stores/{store_id}/whitepaper/export")
-def export_store_whitepaper(store_id: str) -> PlainTextResponse:
+def export_store_whitepaper(
+    store_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> PlainTextResponse:
+    _ensure_store_scope(db, current_user, store_id)
+
     content = load_whitepaper(store_id)
     if not content:
         raise HTTPException(status_code=404, detail="Whitepaper not found for this store")
@@ -418,14 +532,24 @@ def export_store_whitepaper(store_id: str) -> PlainTextResponse:
 
 
 @app.post("/api/lingxing/sync")
-def sync_lingxing(payload: LingxingSyncRequest) -> Dict[str, Any]:
+def sync_lingxing(
+    payload: LingxingSyncRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    if not payload.store_id:
+        raise HTTPException(status_code=422, detail="store_id is required")
+    _ensure_store_scope(db, current_user, payload.store_id)
+
     try:
+        credentials = _resolve_lingxing_credentials(current_user)
         result = sync_lingxing_data(
             store_id=payload.store_id,
             report_date=payload.report_date,
             start_date=payload.start_date,
             end_date=payload.end_date,
             persist=payload.persist,
+            credentials=credentials,
         )
         if payload.persist:
             store_repo.invalidate()
@@ -436,11 +560,19 @@ def sync_lingxing(payload: LingxingSyncRequest) -> Dict[str, Any]:
 
 
 @app.post("/api/ops/sync/incremental")
-def sync_ops_incremental(payload: OpsIncrementalSyncRequest) -> Dict[str, Any]:
+def sync_ops_incremental(
+    payload: OpsIncrementalSyncRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    _ensure_store_scope(db, current_user, payload.store_id)
+
     try:
+        credentials = _resolve_lingxing_credentials(current_user)
         result = incremental_sync_store(
             store_id=payload.store_id,
             persist_csv=payload.persist_csv,
+            credentials=credentials,
         )
         if payload.persist_csv:
             store_repo.invalidate()
@@ -452,7 +584,13 @@ def sync_ops_incremental(payload: OpsIncrementalSyncRequest) -> Dict[str, Any]:
 
 
 @app.post("/api/ops/whitepaper/synthesize")
-def synthesize_ops_whitepaper(payload: OpsWhitepaperSynthesisRequest) -> Dict[str, Any]:
+def synthesize_ops_whitepaper(
+    payload: OpsWhitepaperSynthesisRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    _ensure_store_scope(db, current_user, payload.store_id)
+
     try:
         return synthesize_operational_whitepaper(store_id=payload.store_id)
     except Exception as exc:  # noqa: BLE001
@@ -461,7 +599,13 @@ def synthesize_ops_whitepaper(payload: OpsWhitepaperSynthesisRequest) -> Dict[st
 
 
 @app.get("/api/ops/whitepaper/{store_id}")
-def get_ops_whitepaper(store_id: str) -> Dict[str, Any]:
+def get_ops_whitepaper(
+    store_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    _ensure_store_scope(db, current_user, store_id)
+
     try:
         return read_operational_whitepaper(store_id=store_id)
     except Exception as exc:  # noqa: BLE001
@@ -470,7 +614,13 @@ def get_ops_whitepaper(store_id: str) -> Dict[str, Any]:
 
 
 @app.post("/api/ops/advisory")
-def get_ops_advisory(payload: OpsAdvisoryRequest) -> Dict[str, Any]:
+def get_ops_advisory(
+    payload: OpsAdvisoryRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    _ensure_store_scope(db, current_user, payload.store_id)
+
     try:
         if payload.refresh_whitepaper:
             synthesize_operational_whitepaper(store_id=payload.store_id)
@@ -481,14 +631,24 @@ def get_ops_advisory(payload: OpsAdvisoryRequest) -> Dict[str, Any]:
 
 
 @app.post("/api/lingxing/context-package/jobs", status_code=202)
-def create_lingxing_context_package_job(payload: ContextPackageJobRequest) -> Dict[str, Any]:
+def create_lingxing_context_package_job(
+    payload: ContextPackageJobRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    _ensure_store_scope(db, current_user, payload.store_id)
+
     try:
+        credentials = _resolve_lingxing_credentials(current_user)
         result = context_export_job_manager.create_job(
             store_id=payload.store_id,
             start_date=payload.start_date,
             end_date=payload.end_date,
             days=payload.days,
-            build_func=build_lingxing_context_package,
+            build_func=lambda **kwargs: build_lingxing_context_package(
+                credentials=credentials,
+                **kwargs,
+            ),
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -497,18 +657,28 @@ def create_lingxing_context_package_job(payload: ContextPackageJobRequest) -> Di
 
 
 @app.get("/api/lingxing/context-package/jobs/{job_id}")
-def get_lingxing_context_package_job(job_id: str) -> Dict[str, Any]:
+def get_lingxing_context_package_job(
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
     job = context_export_job_manager.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Context package job not found")
+    _ensure_store_scope(db, current_user, str(job.get("store_id") or ""))
     return job
 
 
 @app.get("/api/lingxing/context-package/jobs/{job_id}/download")
-def download_lingxing_context_package_job(job_id: str) -> FileResponse:
+def download_lingxing_context_package_job(
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> FileResponse:
     info = context_export_job_manager.get_download_info(job_id)
     if not info:
         raise HTTPException(status_code=404, detail="Context package job not found")
+    _ensure_store_scope(db, current_user, str(info.get("store_id") or ""))
 
     status = str(info.get("status") or "")
     if status != "succeeded":
@@ -534,13 +704,21 @@ def download_lingxing_context_package_job(job_id: str) -> FileResponse:
 
 
 @app.post("/api/lingxing/context-package/export")
-def export_lingxing_context_package(payload: ContextPackageRequest) -> Response:
+def export_lingxing_context_package(
+    payload: ContextPackageRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Response:
+    _ensure_store_scope(db, current_user, payload.store_id)
+
     try:
+        credentials = _resolve_lingxing_credentials(current_user)
         package = build_lingxing_context_package(
             store_id=payload.store_id,
             start_date=payload.start_date,
             end_date=payload.end_date,
             days=payload.days,
+            credentials=credentials,
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -565,6 +743,8 @@ async def analyze_uploaded_excel(
     model: Optional[str] = Form(None),
     rules: Optional[str] = Form(None),
     run_gemini: bool = Form(True),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
 ) -> Dict[str, Any]:
     if not file.filename:
         raise HTTPException(status_code=400, detail="Please upload a valid Excel file")
@@ -575,6 +755,7 @@ async def analyze_uploaded_excel(
 
     try:
         store_id = store_id.strip() or "uploaded_store"
+        _ensure_store_scope(db, current_user, store_id)
         language = normalize_language(lang)
         file_bytes = await file.read()
         workbook = parse_uploaded_workbook(file_bytes=file_bytes, store_id=store_id)

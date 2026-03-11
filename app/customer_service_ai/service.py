@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import desc, select
+from sqlalchemy import and_, desc, select
 from sqlalchemy.orm import Session
 
 from .auto_reply_engine import AutoReplyEngine
@@ -46,12 +47,22 @@ class ProcessResult:
 
 def list_messages(
     db: Session,
+    *,
+    tenant_id: int,
+    store_id: int,
     status: MessageStatus | None = None,
     category: str | None = None,
     risk_level: str | None = None,
     limit: int = 100,
 ) -> list[BuyerMessage]:
-    stmt = select(BuyerMessage)
+    """List scoped buyer messages with optional status/category/risk filters."""
+
+    stmt = select(BuyerMessage).where(
+        and_(
+            BuyerMessage.tenant_id == tenant_id,
+            BuyerMessage.store_id == store_id,
+        )
+    )
     if status is not None:
         stmt = stmt.where(BuyerMessage.status == status.value)
     if category:
@@ -62,8 +73,17 @@ def list_messages(
     return list(db.execute(stmt).scalars().all())
 
 
-def get_message(db: Session, message_id: int) -> BuyerMessage:
-    message = db.get(BuyerMessage, message_id)
+def get_message(db: Session, *, message_id: int, tenant_id: int, store_id: int) -> BuyerMessage:
+    """Load a scoped buyer message by id."""
+
+    stmt = select(BuyerMessage).where(
+        and_(
+            BuyerMessage.id == message_id,
+            BuyerMessage.tenant_id == tenant_id,
+            BuyerMessage.store_id == store_id,
+        )
+    )
+    message = db.execute(stmt).scalar_one_or_none()
     if message is None:
         raise MessageNotFoundError(f"Buyer message {message_id} not found")
     return message
@@ -71,16 +91,29 @@ def get_message(db: Session, message_id: int) -> BuyerMessage:
 
 def fetch_and_store_messages(
     db: Session,
+    *,
+    tenant_id: int,
+    store_id: int,
     sync_service: MessageSyncService,
     storage_service: MessageStorageService,
 ) -> StoreMessagesResult:
+    """Fetch messages from SP-API and store them in scoped message table."""
+
     incoming = sync_service.fetch_messages()
-    return storage_service.store_messages(db=db, incoming=incoming)
+    return storage_service.store_messages(
+        db=db,
+        incoming=incoming,
+        tenant_id=tenant_id,
+        store_id=store_id,
+    )
 
 
 def process_message_pipeline(
     db: Session,
+    *,
     message_id: int,
+    tenant_id: int,
+    store_id: int,
     llm: CustomerServiceLLM,
     classification_service: MessageClassificationService,
     sentiment_service: SentimentAnalysisService,
@@ -93,7 +126,9 @@ def process_message_pipeline(
     force_regenerate: bool = False,
     allow_auto_send: bool = True,
 ) -> ProcessResult:
-    message = get_message(db, message_id)
+    """Run AI analysis/reply pipeline and optionally auto-send."""
+
+    message = get_message(db, message_id=message_id, tenant_id=tenant_id, store_id=store_id)
 
     if message.status in {MessageStatus.SENT.value, MessageStatus.AUTO_SENT.value} and not force_regenerate:
         return ProcessResult(
@@ -159,6 +194,7 @@ def process_message_pipeline(
                 reply=message.final_reply or message.ai_reply or "",
             )
             message.status = MessageStatus.AUTO_SENT.value
+            message.sent_at = datetime.now(timezone.utc)
             auto_sent = True
         except Exception:  # noqa: BLE001
             message.status = MessageStatus.WAITING_REVIEW.value
@@ -177,8 +213,17 @@ def process_message_pipeline(
     )
 
 
-def update_final_reply(db: Session, message_id: int, final_reply: str) -> BuyerMessage:
-    message = get_message(db, message_id)
+def update_final_reply(
+    db: Session,
+    *,
+    message_id: int,
+    tenant_id: int,
+    store_id: int,
+    final_reply: str,
+) -> BuyerMessage:
+    """Update the final editable reply for a scoped message."""
+
+    message = get_message(db, message_id=message_id, tenant_id=tenant_id, store_id=store_id)
     if message.status in {MessageStatus.SENT.value, MessageStatus.AUTO_SENT.value}:
         raise MessageStateError("Cannot edit a message that has already been sent")
 
@@ -196,8 +241,17 @@ def update_final_reply(db: Session, message_id: int, final_reply: str) -> BuyerM
     return message
 
 
-def approve_reply(db: Session, message_id: int) -> BuyerMessage:
-    message = get_message(db, message_id)
+def approve_reply(
+    db: Session,
+    *,
+    message_id: int,
+    tenant_id: int,
+    store_id: int,
+    approver_user_id: int | None = None,
+) -> BuyerMessage:
+    """Approve scoped reply so it can be sent through SP-API."""
+
+    message = get_message(db, message_id=message_id, tenant_id=tenant_id, store_id=store_id)
 
     if message.status in {MessageStatus.SENT.value, MessageStatus.AUTO_SENT.value}:
         raise MessageStateError("Message already sent")
@@ -208,6 +262,8 @@ def approve_reply(db: Session, message_id: int) -> BuyerMessage:
 
     message.final_reply = reply_to_use
     message.status = MessageStatus.APPROVED.value
+    if approver_user_id is not None:
+        message.approved_by_user_id = approver_user_id
 
     db.add(message)
     db.commit()
@@ -217,10 +273,15 @@ def approve_reply(db: Session, message_id: int) -> BuyerMessage:
 
 def send_approved_reply(
     db: Session,
+    *,
     message_id: int,
+    tenant_id: int,
+    store_id: int,
     send_service: MessageSendService,
 ) -> tuple[BuyerMessage, dict[str, Any]]:
-    message = get_message(db, message_id)
+    """Send approved scoped reply to SP-API and mark as sent."""
+
+    message = get_message(db, message_id=message_id, tenant_id=tenant_id, store_id=store_id)
 
     if message.status != MessageStatus.APPROVED.value:
         raise MessageStateError("Message must be approved before sending")
@@ -232,6 +293,7 @@ def send_approved_reply(
     sp_result = send_service.send(conversation_id=message.conversation_id, reply=final_reply)
 
     message.status = MessageStatus.SENT.value
+    message.sent_at = datetime.now(timezone.utc)
     db.add(message)
     db.commit()
     db.refresh(message)
@@ -239,6 +301,8 @@ def send_approved_reply(
 
 
 def _pipeline_from_message(message: BuyerMessage) -> PipelineResult:
+    """Build standardized pipeline response payload from persisted message row."""
+
     return PipelineResult(
         category=(message.category or "other"),
         sentiment=(message.sentiment or "neutral"),

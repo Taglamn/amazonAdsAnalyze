@@ -450,3 +450,98 @@ python -m unittest -q
 3. 客服 AI 增加前端工作台（消息列表、编辑、审批、发送）。
 4. 将 Context 异步任务迁移到 Redis/Celery，提升重启恢复能力。
 5. 统一数据读取层，逐步从 CSV 迁移到 SQLite。
+
+---
+
+## 13. 用户与权限（新增）
+
+本版本新增完整的多租户用户与店铺授权能力（FastAPI + PostgreSQL + JWT + bcrypt + Alembic）：
+
+- 用户认证：注册、登录、JWT
+- RBAC：`admin` / `manager` / `staff` / `viewer`
+- 店铺授权：用户仅可访问授权店铺数据
+- 多租户：核心表均带 `tenant_id`
+- 客服消息：仅 `staff/manager/admin` 可访问，且按店铺授权隔离
+
+### 13.1 新增核心表
+
+- `tenants`
+- `roles`
+- `users`
+- `stores`
+- `user_store_mapping`
+- `buyer_messages`
+
+### 13.2 迁移
+
+```bash
+alembic upgrade head
+```
+
+### 13.3 启动
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8080
+```
+
+启动后会自动：
+
+- 初始化 RBAC 表结构
+- 初始化默认租户与默认管理员（由 `.env` 中 `BOOTSTRAP_*` 控制）
+- 同步本地店铺目录到授权表
+
+### 13.4 认证 API 示例
+
+1. 登录获取 JWT
+
+```bash
+curl -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"account":"admin","password":"ChangeThisPassword123!"}'
+```
+
+2. 创建用户
+
+```bash
+curl -X POST http://localhost:8080/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username":"staff1","email":"staff1@example.com","password":"StrongPass123!","tenant_id":1,"role":"staff"}'
+```
+
+3. 给用户授权店铺
+
+```bash
+curl -X POST http://localhost:8080/api/auth/users/2/stores \
+  -H "Authorization: Bearer <JWT>" \
+  -H "Content-Type: application/json" \
+  -d '{"external_store_id":"store_a","store_name":"Store A"}'
+```
+
+4. 查询当前用户可见店铺
+
+```bash
+curl http://localhost:8080/api/auth/stores/me \
+  -H "Authorization: Bearer <JWT>"
+```
+
+### 13.5 AI 客服 API（按店铺授权）
+
+- 拉取消息：`POST /api/customer-service/stores/{store_id}/messages/fetch`
+- 列表：`GET /api/customer-service/stores/{store_id}/messages`
+- 生成回复：`POST /api/customer-service/stores/{store_id}/messages/{message_id}/generate`
+- 编辑回复：`PATCH /api/customer-service/stores/{store_id}/messages/{message_id}/reply`
+- 审批：`POST /api/customer-service/stores/{store_id}/messages/{message_id}/approve`
+- 发送：`POST /api/customer-service/stores/{store_id}/messages/{message_id}/send`
+- 审批并发送：`POST /api/customer-service/stores/{store_id}/messages/{message_id}/approve-send`
+
+生成回复返回结构示例：
+
+```json
+{
+  "category": "damage",
+  "sentiment": "negative",
+  "risk_level": "high",
+  "product_issue": "broken leg",
+  "reply": "Hello, we sincerely apologize..."
+}
+```

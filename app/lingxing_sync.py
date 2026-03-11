@@ -414,11 +414,12 @@ def sync_lingxing_data(
     start_date: str | None = None,
     end_date: str | None = None,
     persist: bool = True,
+    credentials: LingxingCredentials | None = None,
 ) -> Dict[str, Any]:
     window = resolve_sync_window(report_date=report_date, start_date=start_date, end_date=end_date)
 
-    credentials = LingxingCredentials.from_env()
-    client = LingxingClient(credentials=credentials)
+    effective_credentials = credentials or LingxingCredentials.from_env()
+    client = LingxingClient(credentials=effective_credentials)
 
     access_token = client.generate_access_token()
     sellers = client.list_sellers(access_token=access_token)
