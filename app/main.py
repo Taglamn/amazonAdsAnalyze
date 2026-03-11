@@ -11,6 +11,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .analysis import build_bid_recommendations, build_optimization_cases
+from .customer_service_ai.api import router as customer_service_router
+from .customer_service_ai.db import init_customer_service_schema
 from .context_export_jobs import context_export_job_manager
 from .data_access import HISTORY_DIR, PERFORMANCE_DIR, Store, store_repo
 from .gemini_bridge import (
@@ -25,6 +27,10 @@ from .gemini_bridge import (
 from .lingxing_sync import sync_lingxing_data
 from .lingxing_client import LingxingClient, LingxingCredentials
 from .lingxing_context_package import build_lingxing_context_package
+from .ops_advisory import generate_periodic_advice
+from .ops_logger import get_ops_logger
+from .ops_sync import incremental_sync_store
+from .ops_whitepaper import read_operational_whitepaper, synthesize_operational_whitepaper
 from .upload_analysis import build_upload_summary, parse_uploaded_workbook, serialize_performance_rows
 from .whitepaper_store import load_whitepaper, save_whitepaper, whitepaper_info
 
@@ -42,6 +48,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(customer_service_router)
+logger = get_ops_logger()
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    try:
+        init_customer_service_schema()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("customer_service_schema_init_failed error=%s", exc)
 
 
 class AdviceRequest(BaseModel):
@@ -75,6 +91,20 @@ class ContextPackageJobRequest(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     days: int = 365
+
+
+class OpsIncrementalSyncRequest(BaseModel):
+    store_id: str
+    persist_csv: bool = True
+
+
+class OpsWhitepaperSynthesisRequest(BaseModel):
+    store_id: str
+
+
+class OpsAdvisoryRequest(BaseModel):
+    store_id: str
+    refresh_whitepaper: bool = False
 
 
 DEFAULT_UPLOAD_RULES = {
@@ -403,6 +433,51 @@ def sync_lingxing(payload: LingxingSyncRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return result
+
+
+@app.post("/api/ops/sync/incremental")
+def sync_ops_incremental(payload: OpsIncrementalSyncRequest) -> Dict[str, Any]:
+    try:
+        result = incremental_sync_store(
+            store_id=payload.store_id,
+            persist_csv=payload.persist_csv,
+        )
+        if payload.persist_csv:
+            store_repo.invalidate()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("ops_incremental_sync_failed store_id=%s", payload.store_id)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return result
+
+
+@app.post("/api/ops/whitepaper/synthesize")
+def synthesize_ops_whitepaper(payload: OpsWhitepaperSynthesisRequest) -> Dict[str, Any]:
+    try:
+        return synthesize_operational_whitepaper(store_id=payload.store_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("ops_whitepaper_synthesis_failed store_id=%s", payload.store_id)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/ops/whitepaper/{store_id}")
+def get_ops_whitepaper(store_id: str) -> Dict[str, Any]:
+    try:
+        return read_operational_whitepaper(store_id=store_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("ops_whitepaper_read_failed store_id=%s", store_id)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/ops/advisory")
+def get_ops_advisory(payload: OpsAdvisoryRequest) -> Dict[str, Any]:
+    try:
+        if payload.refresh_whitepaper:
+            synthesize_operational_whitepaper(store_id=payload.store_id)
+        return generate_periodic_advice(store_id=payload.store_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("ops_advisory_failed store_id=%s", payload.store_id)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/lingxing/context-package/jobs", status_code=202)

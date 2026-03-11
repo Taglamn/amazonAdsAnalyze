@@ -4,7 +4,8 @@ import htm from 'https://esm.sh/htm@3.1.1';
 
 const html = htm.bind(React.createElement);
 
-const NAV_KEYS = ['dashboard', 'playbook', 'adGroups', 'history'];
+const ADS_NAV_KEYS = ['dashboard', 'playbook', 'adGroups', 'history'];
+const AUTO_REPLY_NAV_KEYS = ['autoReplyMail'];
 
 const I18N = {
   en: {
@@ -16,6 +17,16 @@ const I18N = {
       playbook: 'Playbook Logic',
       adGroups: 'Ad Groups',
       history: 'Optimization History',
+      autoReplyMail: 'Auto Reply Mail',
+    },
+    navGroup: {
+      ads: 'Ads',
+      autoReply: 'Auto Reply',
+    },
+    autoReply: {
+      title: 'Auto Reply Mail',
+      subtitle: 'Customer-service auto reply module for buyer messages.',
+      tip: 'Use Customer Service APIs: fetch -> process -> review -> send.',
     },
     headerNote: 'All APIs enforce strict store-level data isolation.',
     storeSwitcher: 'Store Switcher',
@@ -122,6 +133,16 @@ const I18N = {
       playbook: '策略白皮书逻辑',
       adGroups: '广告组调优',
       history: '优化历史复盘',
+      autoReplyMail: '自动回复邮件',
+    },
+    navGroup: {
+      ads: '广告',
+      autoReply: '自动回复邮件',
+    },
+    autoReply: {
+      title: '自动回复邮件',
+      subtitle: '买家消息客服自动回复模块。',
+      tip: '使用客服 API 流程：拉取消息 -> AI 处理 -> 人工审核 -> 发送。',
     },
     headerNote: '所有接口均按店铺维度隔离，避免跨店数据混用。',
     storeSwitcher: '店铺切换',
@@ -1064,7 +1085,25 @@ function App() {
           <p className="mt-1 text-xs text-brand-200">${t.appSubtitle}</p>
         </div>
         <nav className="px-3 pb-6">
-          ${NAV_KEYS.map(
+          <p className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-brand-300">${t.navGroup.ads}</p>
+          ${ADS_NAV_KEYS.map(
+            (key) => html`
+              <button
+                key=${key}
+                onClick=${() => setView(key)}
+                className=${`mb-2 w-full rounded-lg px-3 py-2 text-left text-sm transition ${
+                  key === view
+                    ? 'bg-brand-600 text-white'
+                    : 'text-brand-100 hover:bg-brand-800'
+                }`}
+              >
+                ${t.nav[key]}
+              </button>
+            `,
+          )}
+
+          <p className="mb-2 mt-4 px-2 text-xs font-semibold uppercase tracking-wide text-brand-300">${t.navGroup.autoReply}</p>
+          ${AUTO_REPLY_NAV_KEYS.map(
             (key) => html`
               <button
                 key=${key}
@@ -1299,6 +1338,18 @@ function App() {
                   onExport=${onExportAdvice}
                   t=${t}
                 />
+              </section>
+            `
+          : null}
+
+        ${view === 'autoReplyMail'
+          ? html`
+              <section className="space-y-4">
+                <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
+                  <h3 className="text-base font-semibold">${t.autoReply.title}</h3>
+                  <p className="mt-1 text-sm text-brand-600">${t.autoReply.subtitle}</p>
+                  <p className="mt-3 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">${t.autoReply.tip}</p>
+                </div>
               </section>
             `
           : null}

@@ -4,10 +4,52 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: amazon-ads-analyze
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8080
     ports:
       - "8080:8080"
     env_file:
       - .env
     volumes:
       - ./app/data:/app/app/data
+    depends_on:
+      - postgres
+      - redis
     restart: unless-stopped
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: amazon-ads-celery
+    command: celery -A app.customer_service_ai.celery_worker.celery_app worker -l info
+    env_file:
+      - .env
+    volumes:
+      - ./app/data:/app/app/data
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: amazon-ads-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: amazon_ads
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: amazon-ads-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
