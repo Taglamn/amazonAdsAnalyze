@@ -189,8 +189,10 @@ class LingxingMessagingClient:
 
         candidates = self._build_path_candidates(path)
         last_error: MessagingAPIError | None = None
+        attempted: list[str] = []
         for candidate in candidates:
             try:
+                attempted.append(candidate)
                 return self._call_openapi(path=candidate, method=method, query=query, body=body)
             except MessagingAPIError as exc:
                 last_error = exc
@@ -200,7 +202,7 @@ class LingxingMessagingClient:
                     raise
 
         if last_error is not None:
-            raise last_error
+            raise MessagingAPIError(f"{last_error}. attempted_paths={attempted}") from last_error
         raise MessagingAPIError("Lingxing API call failed without detailed error")
 
     @staticmethod
@@ -210,12 +212,56 @@ class LingxingMessagingClient:
         base = (path or "").strip() or "/erp/sc/message/lists"
         candidates: list[str] = [base]
 
+        def add(item: str) -> None:
+            if item:
+                candidates.append(item)
+
         if base.endswith("/lists"):
-            candidates.append(base[:-1])  # /lists -> /list
-        if "/message/" in base:
-            candidates.append(base.replace("/message/", "/mail/"))
+            add(base[:-1])  # /lists -> /list
+        if base.endswith("/list"):
+            add(f"{base}s")  # /list -> /lists
+
+        token_pairs = [
+            ("/message/", "/mail/"),
+            ("/message/", "/email/"),
+            ("/mail/", "/message/"),
+            ("/mail/", "/email/"),
+            ("/email/", "/message/"),
+            ("/email/", "/mail/"),
+            ("/messages/", "/message/"),
+            ("/message/", "/messages/"),
+        ]
+        for src, dst in token_pairs:
+            if src in base:
+                add(base.replace(src, dst))
+
         if base.endswith("/reply"):
-            candidates.append(base[:-5] + "send")
+            add(base[:-5] + "send")
+            add(base[:-5] + "replies")
+        if base.endswith("/send"):
+            add(base[:-4] + "reply")
+
+        # Explicit fallback set for common Lingxing naming variants.
+        common_candidates = [
+            "/erp/sc/message/lists",
+            "/erp/sc/message/list",
+            "/erp/sc/messages/lists",
+            "/erp/sc/messages/list",
+            "/erp/sc/mail/lists",
+            "/erp/sc/mail/list",
+            "/erp/sc/email/lists",
+            "/erp/sc/email/list",
+            "/erp/sc/message/reply",
+            "/erp/sc/message/send",
+            "/erp/sc/messages/reply",
+            "/erp/sc/messages/send",
+            "/erp/sc/mail/reply",
+            "/erp/sc/mail/send",
+            "/erp/sc/email/reply",
+            "/erp/sc/email/send",
+        ]
+        for item in common_candidates:
+            add(item)
 
         # Deduplicate while preserving order.
         seen: set[str] = set()
