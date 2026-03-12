@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -24,6 +25,7 @@ class CustomerServiceSettings:
     lingxing_list_messages_flag_value: str
     lingxing_list_messages_email_field: str
     lingxing_list_messages_email_value: str
+    lingxing_list_messages_email_map: dict[str, str]
     lingxing_list_messages_start_date_field: str
     lingxing_list_messages_end_date_field: str
     lingxing_list_messages_default_days: int
@@ -67,6 +69,28 @@ def get_customer_service_settings() -> CustomerServiceSettings:
     except ValueError:
         list_len = 20
 
+    email_map_raw = os.getenv("CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_EMAIL_MAP", "").strip()
+    email_map: dict[str, str] = {}
+    if email_map_raw:
+        try:
+            parsed = json.loads(email_map_raw)
+            if isinstance(parsed, dict):
+                email_map = {
+                    str(k).strip(): str(v).strip()
+                    for k, v in parsed.items()
+                    if str(k).strip() and str(v).strip()
+                }
+        except json.JSONDecodeError:
+            # Allow simple format: key1=email1,key2=email2
+            for pair in email_map_raw.split(","):
+                if "=" not in pair:
+                    continue
+                k, v = pair.split("=", 1)
+                key = k.strip()
+                val = v.strip()
+                if key and val:
+                    email_map[key] = val
+
     return CustomerServiceSettings(
         database_url=(
             os.getenv("CUSTOMER_SERVICE_DATABASE_URL", "").strip()
@@ -105,6 +129,7 @@ def get_customer_service_settings() -> CustomerServiceSettings:
             "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_EMAIL_VALUE",
             "",
         ).strip(),
+        lingxing_list_messages_email_map=email_map,
         lingxing_list_messages_start_date_field=os.getenv(
             "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_START_DATE_FIELD",
             "start_date",

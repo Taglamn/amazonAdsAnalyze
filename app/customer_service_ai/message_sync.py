@@ -12,11 +12,13 @@ class MessageSyncService:
         store_name: str,
         sid: int | None = None,
         email: str = "",
+        external_store_id: str = "",
     ) -> None:
         self.client = client
         self.store_name = store_name
         self.sid = sid
         self.email = email
+        self.external_store_id = external_store_id
 
     def fetch_messages(self) -> list[IncomingBuyerMessage]:
         """Fetch buyer messages for the scoped store."""
@@ -25,4 +27,5 @@ class MessageSyncService:
             store_name=self.store_name,
             sid=self.sid,
             email=self.email,
+            external_store_id=self.external_store_id,
         )

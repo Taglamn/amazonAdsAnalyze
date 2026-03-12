@@ -162,6 +162,7 @@ def fetch_messages(
                 store_name=target_store.store_name,
                 sid=target_store.sid,
                 email=target_store.email,
+                external_store_id=target_store.external_store_id,
             ),
             storage_service=MessageStorageService(),
         )

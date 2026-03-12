@@ -105,11 +105,26 @@ class LingxingMessagingClient:
         store_name: str,
         sid: int | None = None,
         email: str = "",
+        external_store_id: str = "",
     ) -> list[IncomingBuyerMessage]:
         """Fetch buyer messages for one Lingxing store."""
 
         payload: dict[str, Any] = {}
-        target_email = (email or self.settings.lingxing_list_messages_email_value).strip()
+        email_map = self.settings.lingxing_list_messages_email_map
+        target_email = (
+            email
+            or email_map.get((external_store_id or "").strip(), "")
+            or email_map.get((store_name or "").strip(), "")
+            or (email_map.get(str(sid), "") if sid is not None else "")
+            or self.settings.lingxing_list_messages_email_value
+        ).strip()
+        if self.settings.lingxing_list_messages_email_field and not target_email:
+            raise MessagingAPIError(
+                "Missing store email for Lingxing mail list API. "
+                "Please configure CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_EMAIL_VALUE "
+                "or CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_EMAIL_MAP "
+                "(e.g. {\"lingxing_7469\":\"store@example.com\"})."
+            )
         if self.settings.lingxing_list_messages_flag_field:
             payload[self.settings.lingxing_list_messages_flag_field] = self.settings.lingxing_list_messages_flag_value
         if self.settings.lingxing_list_messages_email_field and target_email:
