@@ -242,6 +242,8 @@ def list_stores(
     db: Session = Depends(get_db_session),
 ) -> Dict[str, Any]:
     local_stores = store_repo.list_stores()
+    local_store_map: Dict[str, Dict[str, Any]] = {item["store_id"]: item for item in local_stores}
+    local_store_ids = set(local_store_map.keys())
     bulk_sync_stores(
         db,
         tenant_id=current_user.tenant_id,
@@ -260,20 +262,38 @@ def list_stores(
         except Exception as exc:  # noqa: BLE001
             bound_error = str(exc)
 
-    visible_store_ids = {item.external_store_id for item in list_accessible_stores(db, user=current_user)}
-    stores: List[Dict[str, Any]] = [
-        {
-            "store_id": item["store_id"],
+    accessible_stores = list_accessible_stores(db, user=current_user)
+    visible_store_ids = {item.external_store_id for item in accessible_stores}
+    merged: Dict[str, Dict[str, Any]] = {
+        item.external_store_id: {
+            "store_id": item.external_store_id,
+            "store_name": item.store_name,
+            "has_local_data": item.external_store_id in local_store_ids,
+            "source": "auth",
+        }
+        for item in accessible_stores
+    }
+
+    for store_id, item in local_store_map.items():
+        if store_id not in visible_store_ids:
+            continue
+        existing = merged.get(store_id)
+        if existing:
+            existing["store_name"] = item["store_name"] or existing["store_name"]
+            existing["has_local_data"] = True
+            existing["source"] = "local+auth"
+            continue
+        merged[store_id] = {
+            "store_id": store_id,
             "store_name": item["store_name"],
             "has_local_data": True,
             "source": "local",
         }
-        for item in local_stores
-        if item["store_id"] in visible_store_ids
-    ]
 
     if include_bound and bound_stores:
-        merged: Dict[str, Dict[str, Any]] = {item["store_id"]: item for item in stores}
+        # Bound stores may add newly discovered store rows for admin users.
+        accessible_stores = list_accessible_stores(db, user=current_user)
+        visible_store_ids = {item.external_store_id for item in accessible_stores}
         for item in bound_stores:
             if item["store_id"] not in visible_store_ids:
                 continue
@@ -282,14 +302,17 @@ def list_stores(
                 existing["store_name"] = item["store_name"] or existing["store_name"]
                 existing["sid"] = item.get("sid")
                 existing["country"] = item.get("country")
-                existing["source"] = "local+lingxing_bound"
+                existing["has_local_data"] = bool(existing.get("has_local_data"))
+                existing["source"] = (
+                    "local+lingxing_bound" if existing.get("has_local_data") else "auth+lingxing_bound"
+                )
             else:
                 merged[item["store_id"]] = item
 
-        stores = sorted(
-            merged.values(),
-            key=lambda x: str(x.get("store_name") or x.get("store_id")),
-        )
+    stores = sorted(
+        merged.values(),
+        key=lambda x: str(x.get("store_name") or x.get("store_id")),
+    )
 
     return {
         "stores": stores,
