@@ -243,6 +243,12 @@ class LingxingMessagingClient:
 
         # Explicit fallback set for common Lingxing naming variants.
         common_candidates = [
+            "/erp/sc/data/mail/lists",
+            "/erp/sc/data/mail/list",
+            "/erp/sc/data/message/lists",
+            "/erp/sc/data/message/list",
+            "/erp/sc/data/mail/reply",
+            "/erp/sc/data/mail/send",
             "/erp/sc/message/lists",
             "/erp/sc/message/list",
             "/erp/sc/messages/lists",

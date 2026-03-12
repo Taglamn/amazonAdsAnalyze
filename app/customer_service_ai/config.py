@@ -62,7 +62,7 @@ def get_customer_service_settings() -> CustomerServiceSettings:
         gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
         lingxing_list_messages_path=os.getenv(
             "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_PATH",
-            "/erp/sc/message/lists",
+            "/erp/sc/data/mail/lists",
         ).strip(),
         lingxing_list_messages_method=os.getenv(
             "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_METHOD",
@@ -78,7 +78,7 @@ def get_customer_service_settings() -> CustomerServiceSettings:
         ).strip(),
         lingxing_send_message_path=os.getenv(
             "CUSTOMER_SERVICE_LINGXING_SEND_MESSAGE_PATH",
-            "/erp/sc/message/reply",
+            "/erp/sc/data/mail/lists",
         ).strip(),
         lingxing_send_message_method=os.getenv(
             "CUSTOMER_SERVICE_LINGXING_SEND_MESSAGE_METHOD",
