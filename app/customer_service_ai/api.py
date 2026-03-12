@@ -12,7 +12,7 @@ from .analysis_context import build_message_analysis_text
 from .auto_reply_engine import AutoReplyEngine
 from .db import MessageStatus
 from .human_review import HumanReviewEngine
-from .llm import CustomerServiceLLM
+from .llm import CustomerServiceLLM, LLMGenerationError
 from .message_classification import MessageClassificationService
 from .message_send import MessageSendService
 from .message_storage import MessageStorageService
@@ -226,7 +226,7 @@ def fetch_messages(
             created_count=created_count,
             processed_count=processed_count,
         )
-    except (MessagingAPIError, ValueError) as exc:
+    except (MessagingAPIError, LLMGenerationError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
@@ -383,6 +383,8 @@ def process_message(
             analysis_text=analysis_text,
         )
     except MessagingAPIError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except LLMGenerationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except MessageNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
