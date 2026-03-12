@@ -1329,14 +1329,14 @@ function App() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            auto_process: false,
+            auto_process: true,
             async_mode: false,
           }),
         },
         t.requestFailed,
       );
       setMailNotice(
-        `${t.autoReply.fetchResult}: fetched=${result.fetched_count || 0}, created=${result.created_count || 0}`,
+        `${t.autoReply.fetchResult}: fetched=${result.fetched_count || 0}, created=${result.created_count || 0}, processed=${result.processed_count || 0}`,
       );
       await loadCustomerMessages();
     } catch (err) {
@@ -2433,7 +2433,7 @@ function App() {
                                     </button>
                                   </td>
                                   <td className="px-3 py-3">
-                                    <div className="whitespace-pre-wrap break-words text-brand-700">${row.ai_reply || '-'}</div>
+                                    <div className="whitespace-pre-wrap break-words text-brand-700">${row.ai_reply || row.final_reply || '-'}</div>
                                   </td>
                                   <td className="px-3 py-3">
                                     <textarea

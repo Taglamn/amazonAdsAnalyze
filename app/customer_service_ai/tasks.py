@@ -17,7 +17,13 @@ from .queue import celery_app
 from .reply_generation import ReplyGenerationService
 from .risk_detection import ProductIssueExtractionService, RiskDetectionService
 from .sentiment_analysis import SentimentAnalysisService
-from .service import fetch_and_store_messages, get_message, process_message_pipeline, send_approved_reply
+from .service import (
+    fetch_and_store_messages,
+    get_message,
+    list_unprocessed_message_ids,
+    process_message_pipeline,
+    send_approved_reply,
+)
 from .sp_api import LingxingMessagingClient, MessagingAPIError
 
 
@@ -55,7 +61,13 @@ def fetch_buyer_messages_task(
 
         processed = 0
         if auto_process:
-            for message_id in result.new_message_ids:
+            pending_ids = list_unprocessed_message_ids(
+                db=db,
+                tenant_id=tenant_id,
+                store_id=store_id,
+            )
+            process_ids = list(dict.fromkeys([*result.new_message_ids, *pending_ids]))
+            for message_id in process_ids:
                 process_message_task.delay(
                     tenant_id=tenant_id,
                     store_id=store_id,

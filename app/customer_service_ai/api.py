@@ -41,6 +41,7 @@ from .service import (
     fetch_and_store_messages,
     get_message,
     list_messages,
+    list_unprocessed_message_ids,
     process_message_pipeline,
     send_approved_reply,
     update_final_reply,
@@ -174,7 +175,13 @@ def fetch_messages(
         processed_count = 0
 
         if auto_process:
-            for message_id in result.new_message_ids:
+            pending_ids = list_unprocessed_message_ids(
+                db=db,
+                tenant_id=current_user.tenant_id,
+                store_id=internal_store_id,
+            )
+            process_ids = list(dict.fromkeys([*result.new_message_ids, *pending_ids]))
+            for message_id in process_ids:
                 message = get_message(
                     db,
                     message_id=message_id,

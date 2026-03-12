@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import and_, desc, select
+from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.orm import Session
 
 from .auto_reply_engine import AutoReplyEngine
@@ -106,6 +106,34 @@ def fetch_and_store_messages(
         tenant_id=tenant_id,
         store_id=store_id,
     )
+
+
+def list_unprocessed_message_ids(
+    db: Session,
+    *,
+    tenant_id: int,
+    store_id: int,
+    limit: int = 500,
+) -> list[int]:
+    """List scoped message ids that still need AI processing."""
+
+    stmt = (
+        select(BuyerMessage.id)
+        .where(
+            and_(
+                BuyerMessage.tenant_id == tenant_id,
+                BuyerMessage.store_id == store_id,
+                BuyerMessage.status == MessageStatus.NEW.value,
+                or_(
+                    BuyerMessage.ai_reply.is_(None),
+                    BuyerMessage.ai_reply == "",
+                ),
+            )
+        )
+        .order_by(desc(BuyerMessage.created_at), desc(BuyerMessage.id))
+        .limit(limit)
+    )
+    return [int(item[0]) for item in db.execute(stmt).all()]
 
 
 def process_message_pipeline(
