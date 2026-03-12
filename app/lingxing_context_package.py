@@ -207,14 +207,13 @@ def build_lingxing_context_package(
     end_date: str | None = None,
     days: int = 365,
     progress_cb: Optional[ProgressCallback] = None,
-    credentials: LingxingCredentials | None = None,
 ) -> Dict[str, Any]:
     _emit_progress(progress_cb, "init", 1, "Preparing context package request")
     window = resolve_context_window(start_date=start_date, end_date=end_date, days=days)
 
     _emit_progress(progress_cb, "auth", 4, "Generating Lingxing access token")
-    effective_credentials = credentials or LingxingCredentials.from_env()
-    client = LingxingClient(credentials=effective_credentials)
+    credentials = LingxingCredentials.from_env()
+    client = LingxingClient(credentials=credentials)
     access_token = client.generate_access_token()
 
     _emit_progress(progress_cb, "load_sellers", 8, "Loading Lingxing sellers")

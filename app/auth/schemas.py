@@ -13,8 +13,6 @@ class UserRegisterRequest(BaseModel):
     email: EmailStr
     username: str | None = Field(default=None, min_length=3, max_length=64)
     password: str = Field(min_length=8, max_length=128)
-    lingxing_erp_username: str = Field(min_length=1, max_length=255)
-    lingxing_erp_password: str = Field(min_length=1, max_length=255)
     tenant_id: int
     role: RoleName = RoleName.VIEWER
 
@@ -23,10 +21,7 @@ class AdminCreateUserRequest(BaseModel):
     """Admin-only payload for creating users."""
 
     username: str = Field(min_length=3, max_length=64)
-    email: EmailStr
     password: str = Field(min_length=8, max_length=128)
-    lingxing_erp_username: str = Field(min_length=1, max_length=255)
-    lingxing_erp_password: str = Field(min_length=1, max_length=255)
     role: RoleName = RoleName.VIEWER
 
 
@@ -48,8 +43,16 @@ class TokenResponse(BaseModel):
     """JWT token response payload."""
 
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
     expires_in: int
+    refresh_expires_in: int
+
+
+class RefreshTokenRequest(BaseModel):
+    """Payload for access token refresh."""
+
+    refresh_token: str = Field(min_length=16, max_length=4096)
 
 
 class UserOut(BaseModel):
@@ -58,7 +61,6 @@ class UserOut(BaseModel):
     user_id: int
     username: str
     email: str
-    lingxing_erp_username: str | None
     tenant_id: int
     role_id: int
     role: str
@@ -109,15 +111,7 @@ class RemoveStoreAccessRequest(BaseModel):
 class PasswordResetRequest(BaseModel):
     """Payload for password reset."""
 
-    new_password: str | None = Field(default=None, min_length=8, max_length=128)
-    lingxing_erp_username: str | None = Field(default=None, min_length=1, max_length=255)
-    lingxing_erp_password: str | None = Field(default=None, min_length=1, max_length=255)
-
-    @model_validator(mode="after")
-    def _validate_any_field_present(self):
-        if self.new_password or self.lingxing_erp_username or self.lingxing_erp_password:
-            return self
-        raise ValueError("At least one field must be provided")
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 class UserStatusRequest(BaseModel):

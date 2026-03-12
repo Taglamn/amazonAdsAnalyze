@@ -97,7 +97,7 @@ def fetch_and_store_messages(
     sync_service: MessageSyncService,
     storage_service: MessageStorageService,
 ) -> StoreMessagesResult:
-    """Fetch messages from SP-API and store them in scoped message table."""
+    """Fetch messages from Lingxing API and store them in scoped message table."""
 
     incoming = sync_service.fetch_messages()
     return storage_service.store_messages(
@@ -249,7 +249,7 @@ def approve_reply(
     store_id: int,
     approver_user_id: int | None = None,
 ) -> BuyerMessage:
-    """Approve scoped reply so it can be sent through SP-API."""
+    """Approve scoped reply so it can be sent through Lingxing API."""
 
     message = get_message(db, message_id=message_id, tenant_id=tenant_id, store_id=store_id)
 
@@ -279,7 +279,7 @@ def send_approved_reply(
     store_id: int,
     send_service: MessageSendService,
 ) -> tuple[BuyerMessage, dict[str, Any]]:
-    """Send approved scoped reply to SP-API and mark as sent."""
+    """Send approved scoped reply to Lingxing API and mark as sent."""
 
     message = get_message(db, message_id=message_id, tenant_id=tenant_id, store_id=store_id)
 

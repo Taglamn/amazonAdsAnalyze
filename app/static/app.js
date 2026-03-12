@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'https://esm.sh/react@18.2.0';
+import React, { useEffect, useMemo, useRef, useState } from 'https://esm.sh/react@18.2.0';
 import { createRoot } from 'https://esm.sh/react-dom@18.2.0/client';
 import htm from 'https://esm.sh/htm@3.1.1';
 
@@ -6,9 +6,11 @@ const html = htm.bind(React.createElement);
 
 const ADS_NAV_KEYS = ['dashboard', 'playbook', 'adGroups', 'history'];
 const AUTO_REPLY_NAV_KEYS = ['autoReplyMail'];
-const SETTINGS_NAV_KEYS = ['amazonMailConfig', 'userManagement'];
+const SETTINGS_NAV_KEYS = ['userManagement'];
 const AUTH_TOKEN_KEY = 'auth_token';
+const AUTH_REFRESH_TOKEN_KEY = 'auth_refresh_token';
 const AUTH_UNAUTHORIZED_EVENT = 'auth:unauthorized';
+let refreshRequestPromise = null;
 
 const I18N = {
   en: {
@@ -21,7 +23,6 @@ const I18N = {
       adGroups: 'Ad Groups',
       history: 'Optimization History',
       autoReplyMail: 'Auto Reply Mail',
-      amazonMailConfig: 'Amazon Mail Config',
       userManagement: 'User Management',
     },
     navGroup: {
@@ -33,24 +34,21 @@ const I18N = {
       title: 'Auto Reply Mail',
       subtitle: 'Customer-service auto reply module for buyer messages.',
       tip: 'Use Customer Service APIs: fetch -> process -> review -> send.',
-    },
-    amazonMail: {
-      accountCardTitle: 'Amazon Mail Account',
-      accountLabel: 'Amazon Email',
-      passwordLabel: 'Amazon Email Password',
-      passwordHint: 'Leave blank to keep existing password.',
-      hasPassword: 'Password configured',
-      noPassword: 'Password not configured',
-      sslEnabledLabel: 'Enable SSL Connection',
-      sslHostLabel: 'SSL Host',
-      sslPortLabel: 'SSL Port',
-      updatedAt: 'Last updated',
-      saveBtn: 'Save Account',
+      fetchBtn: 'Fetch Messages',
       reloadBtn: 'Reload',
-      saveSuccess: 'Amazon mail account settings saved.',
-      accountRequired: 'Please enter Amazon email.',
-      passwordRequired: 'Please enter password or keep existing password.',
-      sslPortInvalid: 'SSL port must be between 1 and 65535.',
+      processBtn: 'Generate Reply',
+      saveBtn: 'Save Edit',
+      approveBtn: 'Approve',
+      sendBtn: 'Send',
+      buyerMessage: 'Buyer Message',
+      aiReply: 'AI Reply',
+      editReply: 'Edit Reply',
+      status: 'Status',
+      createdAt: 'Created At',
+      actions: 'Actions',
+      empty: 'No messages for this store yet.',
+      loadedCount: 'Loaded',
+      fetchResult: 'Fetch result',
     },
     userMgmt: {
       title: 'User Management',
@@ -59,8 +57,6 @@ const I18N = {
       username: 'Username',
       email: 'Email',
       password: 'Password',
-      lingxingAccount: 'Lingxing Account',
-      lingxingPassword: 'Lingxing Password',
       role: 'Role',
       createBtn: 'Create',
       listTitle: 'Users',
@@ -123,7 +119,7 @@ const I18N = {
       syncDateRangeLabel: 'Lingxing Sync Date Range',
       syncStartDate: 'Start Date',
       syncEndDate: 'End Date',
-      syncDateHint: 'Leave both empty for default recent 14 days.',
+      syncDateHint: 'Leave both empty for default recent 365 days.',
       syncDateInvalid: 'Please set both start and end dates, and ensure start <= end.',
       syncCurrentStoreOnly: 'Only the currently selected store will be synced.',
       contextExportBtn: 'Download Context Package',
@@ -163,13 +159,21 @@ const I18N = {
         currentBid: 'Current Bid',
         suggestedBid: 'Suggested Bid',
         clicks: 'Clicks',
-        spend: 'Spend',
+        spend: 'Total Cost',
         sales: 'Sales',
         acos: 'ACoS',
       },
       syncTableEmpty: 'No ad groups with spend in the selected period.',
       sortAsc: 'Ascending',
       sortDesc: 'Descending',
+      syncJobLabel: 'Lingxing Sync Task',
+      syncJobIdle: 'No Lingxing sync task is running.',
+      syncJobQueued: 'Sync task queued, waiting for execution.',
+      syncJobRunning: 'Lingxing sync task is running...',
+      syncJobDone: 'Lingxing sync completed.',
+      syncJobFailed: 'Lingxing sync failed.',
+      syncJobProgress: 'Progress',
+      syncJobStage: 'Stage',
       contextStoreHint: 'Context Package supports Lingxing stores only (store_id should start with lingxing_).',
       contextJobLabel: 'Context Package Export Task',
       contextJobIdle: 'No context export task is running.',
@@ -191,7 +195,6 @@ const I18N = {
       adGroups: '广告组调优',
       history: '优化历史复盘',
       autoReplyMail: '自动回复邮件',
-      amazonMailConfig: 'Amazon 邮件账户配置',
       userManagement: '用户管理',
     },
     navGroup: {
@@ -203,24 +206,21 @@ const I18N = {
       title: '自动回复邮件',
       subtitle: '买家消息客服自动回复模块。',
       tip: '使用客服 API 流程：拉取消息 -> AI 处理 -> 人工审核 -> 发送。',
-    },
-    amazonMail: {
-      accountCardTitle: 'Amazon 邮件账户配置',
-      accountLabel: 'Amazon 邮箱',
-      passwordLabel: 'Amazon 邮箱密码',
-      passwordHint: '密码留空将保留当前已保存密码。',
-      hasPassword: '已配置密码',
-      noPassword: '未配置密码',
-      sslEnabledLabel: '启用 SSL 连接',
-      sslHostLabel: 'SSL 主机',
-      sslPortLabel: 'SSL 端口',
-      updatedAt: '最近更新时间',
-      saveBtn: '保存账户配置',
-      reloadBtn: '重新加载',
-      saveSuccess: 'Amazon 邮件账户配置已保存。',
-      accountRequired: '请填写 Amazon 邮箱。',
-      passwordRequired: '请填写密码，或保留已有密码。',
-      sslPortInvalid: 'SSL 端口必须在 1 到 65535 之间。',
+      fetchBtn: '拉取邮件',
+      reloadBtn: '刷新列表',
+      processBtn: '生成回复',
+      saveBtn: '保存编辑',
+      approveBtn: '审核通过',
+      sendBtn: '发送',
+      buyerMessage: '买家消息',
+      aiReply: 'AI 回复',
+      editReply: '编辑回复',
+      status: '状态',
+      createdAt: '创建时间',
+      actions: '操作',
+      empty: '当前店铺暂无邮件消息。',
+      loadedCount: '已加载',
+      fetchResult: '拉取结果',
     },
     userMgmt: {
       title: '用户管理',
@@ -229,8 +229,6 @@ const I18N = {
       username: '用户名',
       email: '邮箱',
       password: '密码',
-      lingxingAccount: '领星账号',
-      lingxingPassword: '领星密码',
       role: '角色',
       createBtn: '创建',
       listTitle: '用户列表',
@@ -293,7 +291,7 @@ const I18N = {
       syncDateRangeLabel: '领星同步日期筛选',
       syncStartDate: '开始日期',
       syncEndDate: '结束日期',
-      syncDateHint: '开始和结束都留空时，默认同步最近 14 天。',
+      syncDateHint: '开始和结束都留空时，默认同步最近 365 天。',
       syncDateInvalid: '请同时填写开始/结束日期，并确保开始日期不晚于结束日期。',
       syncCurrentStoreOnly: '仅同步当前已选店铺的数据。',
       contextExportBtn: '下载 Context Package',
@@ -333,13 +331,21 @@ const I18N = {
         currentBid: '当前bid',
         suggestedBid: '建议bid',
         clicks: '点击次数',
-        spend: '消耗金额',
+        spend: '总花费',
         sales: '销售额',
         acos: 'ACoS',
       },
       syncTableEmpty: '所选周期内没有消耗金额大于 0 的广告组。',
       sortAsc: '升序',
       sortDesc: '降序',
+      syncJobLabel: '领星同步任务',
+      syncJobIdle: '当前没有进行中的领星同步任务。',
+      syncJobQueued: '同步任务已入队，等待执行。',
+      syncJobRunning: '领星同步任务执行中...',
+      syncJobDone: '领星同步完成。',
+      syncJobFailed: '领星同步失败。',
+      syncJobProgress: '进度',
+      syncJobStage: '阶段',
       contextStoreHint: 'Context Package 仅支持领星店铺（store_id 需以 lingxing_ 开头）。',
       contextJobLabel: 'Context Package 导出任务',
       contextJobIdle: '当前没有进行中的导出任务。',
@@ -361,6 +367,14 @@ function getStoredAuthToken() {
   }
 }
 
+function getStoredRefreshToken() {
+  try {
+    return window.localStorage.getItem(AUTH_REFRESH_TOKEN_KEY) || '';
+  } catch (_) {
+    return '';
+  }
+}
+
 function setStoredAuthToken(token) {
   try {
     if (token) {
@@ -371,6 +385,23 @@ function setStoredAuthToken(token) {
   } catch (_) {
     // Ignore localStorage failures.
   }
+}
+
+function setStoredRefreshToken(token) {
+  try {
+    if (token) {
+      window.localStorage.setItem(AUTH_REFRESH_TOKEN_KEY, token);
+    } else {
+      window.localStorage.removeItem(AUTH_REFRESH_TOKEN_KEY);
+    }
+  } catch (_) {
+    // Ignore localStorage failures.
+  }
+}
+
+function clearStoredAuthTokens() {
+  setStoredAuthToken('');
+  setStoredRefreshToken('');
 }
 
 function notifyUnauthorized() {
@@ -387,6 +418,87 @@ function withAuthHeaders(headers = {}, includeJson = false) {
     merged['Content-Type'] = 'application/json';
   }
   return merged;
+}
+
+function authBypass(url) {
+  const text = String(url || '');
+  return text.includes('/api/auth/login') || text.includes('/api/auth/register') || text.includes('/api/auth/refresh');
+}
+
+function stripAuthorization(headers = {}) {
+  const normalized = { ...headers };
+  delete normalized.Authorization;
+  delete normalized.authorization;
+  return normalized;
+}
+
+async function refreshAccessToken(requestFailedText) {
+  if (refreshRequestPromise) {
+    return refreshRequestPromise;
+  }
+
+  const refreshToken = getStoredRefreshToken();
+  if (!refreshToken) {
+    throw new Error('Missing refresh token');
+  }
+
+  refreshRequestPromise = (async () => {
+    const res = await fetch('/api/auth/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      const err = detail?.detail || `${requestFailedText}: ${res.status}`;
+      clearStoredAuthTokens();
+      notifyUnauthorized();
+      throw new Error(err);
+    }
+
+    const data = await res.json();
+    const nextAccessToken = String(data.access_token || '').trim();
+    const nextRefreshToken = String(data.refresh_token || '').trim();
+    if (!nextAccessToken || !nextRefreshToken) {
+      clearStoredAuthTokens();
+      notifyUnauthorized();
+      throw new Error('Invalid refresh response');
+    }
+
+    setStoredAuthToken(nextAccessToken);
+    setStoredRefreshToken(nextRefreshToken);
+    return nextAccessToken;
+  })().finally(() => {
+    refreshRequestPromise = null;
+  });
+
+  return refreshRequestPromise;
+}
+
+async function fetchWithAuthRetry(url, options, requestFailedText) {
+  const finalOptions = options ? { ...options } : {};
+  finalOptions.headers = withAuthHeaders(finalOptions.headers || {});
+
+  let res = await fetch(url, finalOptions);
+  if (res.status === 401) {
+    try {
+      await refreshAccessToken(requestFailedText);
+      const retryOptions = {
+        ...finalOptions,
+        headers: withAuthHeaders(stripAuthorization(finalOptions.headers || {})),
+      };
+      res = await fetch(url, retryOptions);
+    } catch (_) {
+      // refreshAccessToken already handled auth reset + event.
+    }
+  }
+
+  if (res.status === 401) {
+    clearStoredAuthTokens();
+    notifyUnauthorized();
+  }
+  return res;
 }
 
 function getDefaultLanguage() {
@@ -523,17 +635,10 @@ function TextOutputBlock({ title, text, emptyText, meta, expanded, onToggle, onE
 
 async function fetchJson(url, options, requestFailedText) {
   const finalOptions = options ? { ...options } : {};
-  const isLoginApi = String(url).includes('/api/auth/login');
-  const isRegisterApi = String(url).includes('/api/auth/register');
-  if (!isLoginApi && !isRegisterApi) {
-    finalOptions.headers = withAuthHeaders(finalOptions.headers || {});
-  }
-
-  const res = await fetch(url, finalOptions);
-  if (res.status === 401) {
-    setStoredAuthToken('');
-    notifyUnauthorized();
-  }
+  const bypass = authBypass(url);
+  const res = bypass
+    ? await fetch(url, finalOptions)
+    : await fetchWithAuthRetry(url, finalOptions, requestFailedText);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
     const err = detail?.detail || `${requestFailedText}: ${res.status}`;
@@ -630,6 +735,13 @@ function OptimizationCases({ cases, t, language }) {
       )}
     </div>
   `;
+}
+
+function formatDateTime(isoValue) {
+  if (!isoValue) return '-';
+  const dt = new Date(isoValue);
+  if (Number.isNaN(dt.getTime())) return String(isoValue);
+  return dt.toLocaleString();
 }
 
 function LingxingSyncTable({ rows, t, language, sortKey, sortDir, onSort }) {
@@ -779,37 +891,103 @@ function App() {
   const [syncSortDir, setSyncSortDir] = useState('asc');
   const [syncStartDate, setSyncStartDate] = useState('');
   const [syncEndDate, setSyncEndDate] = useState('');
+  const [syncJobStatus, setSyncJobStatus] = useState(null);
   const [contextJobStatus, setContextJobStatus] = useState(null);
-  const [amazonEmailAccount, setAmazonEmailAccount] = useState('');
-  const [amazonEmailPassword, setAmazonEmailPassword] = useState('');
-  const [amazonEmailHasPassword, setAmazonEmailHasPassword] = useState(false);
-  const [amazonSslEnabled, setAmazonSslEnabled] = useState(false);
-  const [amazonSslHost, setAmazonSslHost] = useState('');
-  const [amazonSslPort, setAmazonSslPort] = useState('993');
-  const [amazonEmailUpdatedAt, setAmazonEmailUpdatedAt] = useState('');
-  const [autoReplyNotice, setAutoReplyNotice] = useState('');
-  const [autoReplyLoading, setAutoReplyLoading] = useState(false);
   const [adminUsers, setAdminUsers] = useState([]);
   const [adminStores, setAdminStores] = useState([]);
   const [userStoreAccessMap, setUserStoreAccessMap] = useState({});
   const [userRoleDrafts, setUserRoleDrafts] = useState({});
   const [userPasswordDrafts, setUserPasswordDrafts] = useState({});
-  const [userLingxingAccountDrafts, setUserLingxingAccountDrafts] = useState({});
-  const [userLingxingPasswordDrafts, setUserLingxingPasswordDrafts] = useState({});
   const [adminLoading, setAdminLoading] = useState(false);
   const [adminNotice, setAdminNotice] = useState('');
   const [newUserUsername, setNewUserUsername] = useState('');
-  const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
-  const [newUserLingxingAccount, setNewUserLingxingAccount] = useState('');
-  const [newUserLingxingPassword, setNewUserLingxingPassword] = useState('');
   const [newUserRole, setNewUserRole] = useState('viewer');
+  const [mailRows, setMailRows] = useState([]);
+  const [mailLoading, setMailLoading] = useState(false);
+  const [mailNotice, setMailNotice] = useState('');
+  const [replyDrafts, setReplyDrafts] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const syncPollNonceRef = useRef(0);
+  const syncPollingJobIdRef = useRef('');
 
   const contextJobRunning = contextJobStatus && ['queued', 'running'].includes(contextJobStatus.status);
+  const syncJobRunning = syncJobStatus && ['queued', 'running'].includes(syncJobStatus.status);
 
   const fileTimeTag = () => new Date().toISOString().replace(/[:.]/g, '-');
+
+  const stopSyncPolling = () => {
+    syncPollNonceRef.current += 1;
+    syncPollingJobIdRef.current = '';
+  };
+
+  const applyLingxingSyncResult = async (syncRes, activeStoreId) => {
+    const summary = JSON.stringify(syncRes || {}, null, 2);
+    setSyncSummary(summary);
+    const tableRows = ((syncRes?.stores) || []).flatMap((store) => store.lingxing_output_rows || []);
+    setSyncRows(tableRows);
+    setSyncSortKey('campaign');
+    setSyncSortDir('asc');
+
+    const storeRes = await fetchJson('/api/stores?include_bound=true', undefined, t.requestFailed);
+    const newStores = normalizeStores(storeRes.stores || storeRes.store_ids || []);
+    setStores(newStores);
+    const storeIds = newStores.map((item) => item.store_id);
+
+    if (!newStores.length) return;
+    if (!storeIds.includes(activeStoreId)) {
+      setSelectedStore(newStores[0].store_id);
+      return;
+    }
+
+    const [perfRes, recRes, caseRes] = await Promise.all([
+      fetchJson(`/api/stores/${activeStoreId}/performance`, undefined, t.requestFailed),
+      fetchJson(`/api/stores/${activeStoreId}/ad-group-recommendations`, undefined, t.requestFailed),
+      fetchJson(`/api/stores/${activeStoreId}/optimization-cases`, undefined, t.requestFailed),
+    ]);
+    setPerformanceRows(perfRes.daily_performance || []);
+    setRecommendations(recRes.recommendations || []);
+    setCases(caseRes.cases || []);
+  };
+
+  const pollLingxingSyncJob = async (jobId, activeStoreId) => {
+    if (!jobId) return;
+    if (syncPollingJobIdRef.current === jobId) return;
+
+    const pollNonce = syncPollNonceRef.current + 1;
+    syncPollNonceRef.current = pollNonce;
+    syncPollingJobIdRef.current = jobId;
+
+    try {
+      while (true) {
+        await sleep(2000);
+        if (syncPollNonceRef.current !== pollNonce) return;
+
+        const statusResp = await fetchJson(`/api/lingxing/sync/jobs/${jobId}`, undefined, t.requestFailed);
+        if (syncPollNonceRef.current !== pollNonce) return;
+        setSyncJobStatus(statusResp);
+
+        if (statusResp.status === 'failed') {
+          throw new Error(statusResp.message || t.playbook.syncJobFailed);
+        }
+        if (statusResp.status !== 'succeeded') {
+          continue;
+        }
+
+        await applyLingxingSyncResult(statusResp.result || {}, activeStoreId);
+        setSyncJobStatus({
+          ...statusResp,
+          message: t.playbook.syncJobDone,
+        });
+        return;
+      }
+    } finally {
+      if (syncPollNonceRef.current === pollNonce) {
+        syncPollingJobIdRef.current = '';
+      }
+    }
+  };
 
   useEffect(() => {
     document.title = t.pageTitle;
@@ -823,6 +1001,8 @@ function App() {
 
   useEffect(() => {
     const onUnauthorized = () => {
+      stopSyncPolling();
+      clearStoredAuthTokens();
       setAuthToken('');
       setAuthUser(null);
       setStores([]);
@@ -890,11 +1070,13 @@ function App() {
         t.requestFailed,
       );
       const token = data.access_token || '';
+      const refreshToken = data.refresh_token || '';
       setStoredAuthToken(token);
+      setStoredRefreshToken(refreshToken);
       setAuthToken(token);
       setLoginPassword('');
     } catch (err) {
-      setStoredAuthToken('');
+      clearStoredAuthTokens();
       setAuthToken('');
       setLoginError(err.message || t.auth.invalid);
     } finally {
@@ -903,7 +1085,8 @@ function App() {
   };
 
   const onLogout = () => {
-    setStoredAuthToken('');
+    stopSyncPolling();
+    clearStoredAuthTokens();
     setAuthToken('');
     setAuthUser(null);
     setStores([]);
@@ -945,10 +1128,6 @@ function App() {
         Object.fromEntries(users.map((u) => [u.user_id, u.role || 'viewer'])),
       );
       setUserPasswordDrafts({});
-      setUserLingxingAccountDrafts(
-        Object.fromEntries(users.map((u) => [u.user_id, u.lingxing_erp_username || ''])),
-      );
-      setUserLingxingPasswordDrafts({});
     } catch (err) {
       setError(err.message);
     } finally {
@@ -957,13 +1136,7 @@ function App() {
   };
 
   const onCreateManagedUser = async () => {
-    if (
-      !newUserUsername.trim() ||
-      !newUserEmail.trim() ||
-      !newUserPassword ||
-      !newUserLingxingAccount.trim() ||
-      !newUserLingxingPassword
-    ) {
+    if (!newUserUsername.trim() || !newUserPassword) {
       setError(t.requestFailed);
       return;
     }
@@ -978,20 +1151,14 @@ function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             username: newUserUsername.trim(),
-            email: newUserEmail.trim(),
             password: newUserPassword,
-            lingxing_erp_username: newUserLingxingAccount.trim(),
-            lingxing_erp_password: newUserLingxingPassword,
             role: newUserRole,
           }),
         },
         t.requestFailed,
       );
       setNewUserUsername('');
-      setNewUserEmail('');
       setNewUserPassword('');
-      setNewUserLingxingAccount('');
-      setNewUserLingxingPassword('');
       setNewUserRole('viewer');
       setAdminNotice(t.userMgmt.updated);
       await loadUserManagementData();
@@ -1028,12 +1195,7 @@ function App() {
 
   const onResetManagedUserPassword = async (userId) => {
     const newPassword = userPasswordDrafts[userId] || '';
-    const lingxingAccount = (userLingxingAccountDrafts[userId] || '').trim();
-    const lingxingPassword = userLingxingPasswordDrafts[userId] || '';
-    const originalUser = adminUsers.find((item) => item.user_id === userId);
-    const originalLingxingAccount = String(originalUser?.lingxing_erp_username || '').trim();
-    const accountChanged = lingxingAccount !== originalLingxingAccount;
-    if (!newPassword && !lingxingPassword && !accountChanged) return;
+    if (!newPassword) return;
     setAdminLoading(true);
     setAdminNotice('');
     setError('');
@@ -1043,18 +1205,12 @@ function App() {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            new_password: newPassword || undefined,
-            lingxing_erp_username: lingxingAccount || undefined,
-            lingxing_erp_password: lingxingPassword || undefined,
-          }),
+          body: JSON.stringify({ new_password: newPassword }),
         },
         t.requestFailed,
       );
       setUserPasswordDrafts((prev) => ({ ...prev, [userId]: '' }));
-      setUserLingxingPasswordDrafts((prev) => ({ ...prev, [userId]: '' }));
       setAdminNotice(t.userMgmt.updated);
-      await loadUserManagementData();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -1121,6 +1277,154 @@ function App() {
     }
   };
 
+  const loadCustomerMessages = async () => {
+    if (!selectedStore) return;
+    setMailLoading(true);
+    setMailNotice('');
+    setError('');
+    try {
+      const data = await fetchJson(
+        `/api/customer-service/stores/${encodeURIComponent(selectedStore)}/messages?limit=200`,
+        undefined,
+        t.requestFailed,
+      );
+      const items = data.items || [];
+      setMailRows(items);
+      setReplyDrafts(
+        Object.fromEntries(
+          items.map((item) => [item.id, item.final_reply || item.ai_reply || '']),
+        ),
+      );
+      setMailNotice(`${t.autoReply.loadedCount}: ${items.length}`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setMailLoading(false);
+    }
+  };
+
+  const onFetchCustomerMessages = async () => {
+    if (!selectedStore) return;
+    setMailLoading(true);
+    setMailNotice('');
+    setError('');
+    try {
+      const result = await fetchJson(
+        `/api/customer-service/stores/${encodeURIComponent(selectedStore)}/messages/fetch`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            auto_process: false,
+            async_mode: false,
+          }),
+        },
+        t.requestFailed,
+      );
+      setMailNotice(
+        `${t.autoReply.fetchResult}: fetched=${result.fetched_count || 0}, created=${result.created_count || 0}`,
+      );
+      await loadCustomerMessages();
+    } catch (err) {
+      setError(err.message);
+      setMailLoading(false);
+    }
+  };
+
+  const onProcessMessage = async (messageId) => {
+    if (!selectedStore) return;
+    setMailLoading(true);
+    setMailNotice('');
+    setError('');
+    try {
+      await fetchJson(
+        `/api/customer-service/stores/${encodeURIComponent(selectedStore)}/messages/${messageId}/process`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            async_mode: false,
+            force_regenerate: true,
+            allow_auto_send: false,
+          }),
+        },
+        t.requestFailed,
+      );
+      await loadCustomerMessages();
+    } catch (err) {
+      setError(err.message);
+      setMailLoading(false);
+    }
+  };
+
+  const onSaveReply = async (messageId) => {
+    if (!selectedStore) return;
+    const finalReply = String(replyDrafts[messageId] || '').trim();
+    if (!finalReply) return;
+    setMailLoading(true);
+    setMailNotice('');
+    setError('');
+    try {
+      await fetchJson(
+        `/api/customer-service/stores/${encodeURIComponent(selectedStore)}/messages/${messageId}/reply`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ final_reply: finalReply }),
+        },
+        t.requestFailed,
+      );
+      await loadCustomerMessages();
+    } catch (err) {
+      setError(err.message);
+      setMailLoading(false);
+    }
+  };
+
+  const onApproveMessage = async (messageId) => {
+    if (!selectedStore) return;
+    setMailLoading(true);
+    setMailNotice('');
+    setError('');
+    try {
+      await fetchJson(
+        `/api/customer-service/stores/${encodeURIComponent(selectedStore)}/messages/${messageId}/approve`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        },
+        t.requestFailed,
+      );
+      await loadCustomerMessages();
+    } catch (err) {
+      setError(err.message);
+      setMailLoading(false);
+    }
+  };
+
+  const onSendMessage = async (messageId) => {
+    if (!selectedStore) return;
+    setMailLoading(true);
+    setMailNotice('');
+    setError('');
+    try {
+      await fetchJson(
+        `/api/customer-service/stores/${encodeURIComponent(selectedStore)}/messages/${messageId}/send`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ async_mode: false }),
+        },
+        t.requestFailed,
+      );
+      await loadCustomerMessages();
+    } catch (err) {
+      setError(err.message);
+      setMailLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!authUser) return;
     fetchJson('/api/stores?include_bound=true', undefined, I18N.en.requestFailed)
@@ -1136,8 +1440,56 @@ function App() {
   }, [authUser]);
 
   useEffect(() => {
-    if (!authUser || !selectedStore) return;
+    if (!selectedStore) return;
+    stopSyncPolling();
     setContextJobStatus(null);
+    setSyncJobStatus(null);
+    setSyncSummary('');
+    setSyncRows([]);
+  }, [selectedStore]);
+
+  useEffect(() => {
+    if (!authUser || !selectedStore) return;
+    let disposed = false;
+
+    fetchJson(
+      `/api/lingxing/sync/jobs/latest/by-store?store_id=${encodeURIComponent(selectedStore)}`,
+      undefined,
+      t.requestFailed,
+    )
+      .then(async (payload) => {
+        if (disposed) return;
+        const latestJob = payload?.job;
+        if (!latestJob) return;
+
+        setSyncJobStatus(latestJob);
+        if (latestJob.status === 'succeeded' && latestJob.result) {
+          await applyLingxingSyncResult(latestJob.result, selectedStore);
+          if (!disposed) {
+            setSyncJobStatus({
+              ...latestJob,
+              message: t.playbook.syncJobDone,
+            });
+          }
+          return;
+        }
+
+        if (latestJob.status === 'queued' || latestJob.status === 'running') {
+          await pollLingxingSyncJob(latestJob.job_id, selectedStore);
+        }
+      })
+      .catch(() => {
+        // Ignore missing latest job or transient errors.
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [authUser, selectedStore, t.requestFailed, t.playbook.syncJobDone]);
+
+  useEffect(() => {
+    if (!authUser || !selectedStore) return;
+    if (!ADS_NAV_KEYS.includes(view)) return;
     const selectedOption = stores.find((item) => item.store_id === selectedStore);
     if (selectedOption && !selectedOption.has_local_data) {
       setLoading(true);
@@ -1145,7 +1497,6 @@ function App() {
       setPerformanceRows([]);
       setRecommendations([]);
       setCases([]);
-      setSyncRows([]);
 
       fetchJson(`/api/stores/${selectedStore}/whitepaper`, undefined, t.requestFailed)
         .then((whitepaperRes) => {
@@ -1210,6 +1561,7 @@ function App() {
   }, [
     authUser,
     selectedStore,
+    view,
     stores,
     t.requestFailed,
     t.playbook.lines,
@@ -1218,91 +1570,20 @@ function App() {
     t.playbook.storeNotSyncedHint,
   ]);
 
-  const loadAmazonEmailSettings = async () => {
-    setAutoReplyLoading(true);
-    setError('');
-    setAutoReplyNotice('');
-    try {
-      const data = await fetchJson('/api/customer-service/settings/amazon-email', undefined, t.requestFailed);
-      setAmazonEmailAccount(data.email_account || '');
-      setAmazonEmailHasPassword(Boolean(data.has_password));
-      setAmazonSslEnabled(Boolean(data.ssl_enabled));
-      setAmazonSslHost(data.ssl_host || '');
-      setAmazonSslPort(String(data.ssl_port || 993));
-      setAmazonEmailUpdatedAt(data.updated_at || '');
-      setAmazonEmailPassword('');
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setAutoReplyLoading(false);
-    }
-  };
+  useEffect(() => {
+    if (ADS_NAV_KEYS.includes(view)) return;
+    setLoading(false);
+  }, [view]);
 
   useEffect(() => {
-    if (!authUser || view !== 'amazonMailConfig') return;
-    loadAmazonEmailSettings();
-  }, [authUser, view]);
+    if (!authUser || !selectedStore || view !== 'autoReplyMail') return;
+    loadCustomerMessages();
+  }, [authUser, selectedStore, view]);
 
   useEffect(() => {
     if (!authUser || authUser.role !== 'admin' || view !== 'userManagement') return;
     loadUserManagementData();
   }, [authUser, view]);
-
-  const onSaveAmazonEmailSettings = async () => {
-    const account = (amazonEmailAccount || '').trim();
-    if (!account) {
-      setError(t.amazonMail.accountRequired);
-      return;
-    }
-
-    const passwordInput = amazonEmailPassword || '';
-    if (!passwordInput.trim() && !amazonEmailHasPassword) {
-      setError(t.amazonMail.passwordRequired);
-      return;
-    }
-
-    const sslPortNum = Number(amazonSslPort);
-    if (!Number.isInteger(sslPortNum) || sslPortNum < 1 || sslPortNum > 65535) {
-      setError(t.amazonMail.sslPortInvalid);
-      return;
-    }
-
-    setAutoReplyLoading(true);
-    setError('');
-    setAutoReplyNotice('');
-    try {
-      const payload = {
-        email_account: account,
-        email_password: passwordInput,
-        keep_existing_password: !passwordInput.trim(),
-        ssl_enabled: Boolean(amazonSslEnabled),
-        ssl_host: amazonSslHost,
-        ssl_port: sslPortNum,
-      };
-      const data = await fetchJson(
-        '/api/customer-service/settings/amazon-email',
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        },
-        t.requestFailed,
-      );
-
-      setAmazonEmailAccount(data.email_account || account);
-      setAmazonEmailHasPassword(Boolean(data.has_password));
-      setAmazonSslEnabled(Boolean(data.ssl_enabled));
-      setAmazonSslHost(data.ssl_host || '');
-      setAmazonSslPort(String(data.ssl_port || sslPortNum));
-      setAmazonEmailUpdatedAt(data.updated_at || '');
-      setAmazonEmailPassword('');
-      setAutoReplyNotice(t.amazonMail.saveSuccess);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setAutoReplyLoading(false);
-    }
-  };
 
   const onGenerateWhitepaper = async () => {
     if (!selectedStore) return;
@@ -1333,6 +1614,7 @@ function App() {
 
   const onSyncLingxing = async () => {
     if (!selectedStore) return;
+    if (syncJobRunning) return;
     if ((syncStartDate && !syncEndDate) || (!syncStartDate && syncEndDate)) {
       setError(t.playbook.syncDateInvalid);
       return;
@@ -1345,6 +1627,13 @@ function App() {
     setLoading(true);
     setError('');
     setSyncRows([]);
+    setSyncSummary('');
+    setSyncJobStatus({
+      status: 'queued',
+      progress_pct: 0,
+      stage: 'queued',
+      message: t.playbook.syncJobQueued,
+    });
     try {
       const requestBody = { store_id: selectedStore };
       if (syncStartDate && syncEndDate) {
@@ -1352,8 +1641,8 @@ function App() {
         requestBody.end_date = syncEndDate;
       }
 
-      const syncRes = await fetchJson(
-        '/api/lingxing/sync',
+      const createResp = await fetchJson(
+        '/api/lingxing/sync/jobs',
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1361,35 +1650,23 @@ function App() {
         },
         t.requestFailed,
       );
-
-      const summary = JSON.stringify(syncRes, null, 2);
-      setSyncSummary(summary);
-      const tableRows = (syncRes.stores || []).flatMap((store) => store.lingxing_output_rows || []);
-      setSyncRows(tableRows);
-      setSyncSortKey('campaign');
-      setSyncSortDir('asc');
-
-      const storeRes = await fetchJson('/api/stores?include_bound=true', undefined, t.requestFailed);
-      const newStores = normalizeStores(storeRes.stores || storeRes.store_ids || []);
-      setStores(newStores);
-      const storeIds = newStores.map((item) => item.store_id);
-
-      if (newStores.length) {
-        if (!storeIds.includes(selectedStore)) {
-          setSelectedStore(newStores[0].store_id);
-        } else {
-          const [perfRes, recRes, caseRes] = await Promise.all([
-            fetchJson(`/api/stores/${selectedStore}/performance`, undefined, t.requestFailed),
-            fetchJson(`/api/stores/${selectedStore}/ad-group-recommendations`, undefined, t.requestFailed),
-            fetchJson(`/api/stores/${selectedStore}/optimization-cases`, undefined, t.requestFailed),
-          ]);
-          setPerformanceRows(perfRes.daily_performance || []);
-          setRecommendations(recRes.recommendations || []);
-          setCases(caseRes.cases || []);
-        }
-      }
+      const jobId = createResp.job_id;
+      setSyncJobStatus({
+        job_id: jobId,
+        status: 'queued',
+        progress_pct: 0,
+        stage: 'queued',
+        message: t.playbook.syncJobQueued,
+      });
+      await pollLingxingSyncJob(jobId, selectedStore);
     } catch (err) {
-      setError(err.message);
+      const message = err?.message || t.playbook.syncJobFailed;
+      setError(message);
+      setSyncJobStatus((prev) => ({
+        ...(prev || {}),
+        status: 'failed',
+        message,
+      }));
     } finally {
       setLoading(false);
     }
@@ -1410,15 +1687,11 @@ function App() {
       formData.append('lang', language);
       formData.append('run_gemini', 'true');
 
-      const response = await fetch('/api/ai/upload-analysis', {
+      const response = await fetchWithAuthRetry('/api/ai/upload-analysis', {
         method: 'POST',
         headers: withAuthHeaders(),
         body: formData,
-      });
-      if (response.status === 401) {
-        setStoredAuthToken('');
-        notifyUnauthorized();
-      }
+      }, t.requestFailed);
 
       let payload = {};
       try {
@@ -1555,11 +1828,11 @@ function App() {
           continue;
         }
 
-        const downloadResp = await fetch(`/api/lingxing/context-package/jobs/${jobId}/download`);
-        if (downloadResp.status === 401) {
-          setStoredAuthToken('');
-          notifyUnauthorized();
-        }
+        const downloadResp = await fetchWithAuthRetry(
+          `/api/lingxing/context-package/jobs/${jobId}/download`,
+          undefined,
+          t.requestFailed,
+        );
         if (!downloadResp.ok) {
           const detail = await downloadResp.json().catch(() => ({}));
           throw new Error(detail?.detail || `${t.requestFailed}: ${downloadResp.status}`);
@@ -1599,15 +1872,11 @@ function App() {
     try {
       const formData = new FormData();
       formData.append('file', whitepaperFile);
-      const response = await fetch(`/api/stores/${selectedStore}/whitepaper/import`, {
+      const response = await fetchWithAuthRetry(`/api/stores/${selectedStore}/whitepaper/import`, {
         method: 'POST',
         headers: withAuthHeaders(),
         body: formData,
-      });
-      if (response.status === 401) {
-        setStoredAuthToken('');
-        notifyUnauthorized();
-      }
+      }, t.requestFailed);
 
       let payload = {};
       try {
@@ -1650,13 +1919,9 @@ function App() {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch(`/api/stores/${selectedStore}/whitepaper/export`, {
+      const response = await fetchWithAuthRetry(`/api/stores/${selectedStore}/whitepaper/export`, {
         headers: withAuthHeaders(),
-      });
-      if (response.status === 401) {
-        setStoredAuthToken('');
-        notifyUnauthorized();
-      }
+      }, t.requestFailed);
       if (!response.ok) {
         const detail = await response.json().catch(() => ({}));
         throw new Error(detail?.detail || `${t.requestFailed}: ${response.status}`);
@@ -1915,7 +2180,12 @@ function App() {
                   <div className="mt-4 flex flex-wrap gap-2">
                     <button
                       onClick=${onSyncLingxing}
-                      className="rounded-md border border-brand-300 bg-white px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50"
+                      disabled=${Boolean(syncJobRunning)}
+                      className=${`rounded-md border px-4 py-2 text-sm font-semibold ${
+                        syncJobRunning
+                          ? 'cursor-not-allowed border-brand-100 bg-brand-50 text-brand-300'
+                          : 'border-brand-300 bg-white text-brand-700 hover:bg-brand-50'
+                      }`}
                     >
                       ${t.playbook.syncBtn}
                     </button>
@@ -1965,6 +2235,19 @@ function App() {
 
                 <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
                   <h4 className="text-sm font-semibold">${t.playbook.syncSummaryLabel}</h4>
+                  <p className="mt-2 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">
+                    ${syncJobStatus
+                      ? `${t.playbook.syncJobProgress}: ${syncJobStatus.progress_pct ?? 0}% | ${t.playbook.syncJobStage}: ${syncJobStatus.stage || '-'} | ${
+                          syncJobStatus.status === 'failed'
+                            ? (syncJobStatus.message || t.playbook.syncJobFailed)
+                            : syncJobStatus.status === 'succeeded'
+                              ? t.playbook.syncJobDone
+                              : syncJobStatus.status === 'running'
+                                ? t.playbook.syncJobRunning
+                                : t.playbook.syncJobQueued
+                        }`
+                      : t.playbook.syncJobIdle}
+                  </p>
                   ${syncSummary
                     ? html`<${LingxingSyncTable}
                         rows=${syncRows}
@@ -2035,127 +2318,118 @@ function App() {
                   <h3 className="text-base font-semibold">${t.autoReply.title}</h3>
                   <p className="mt-1 text-sm text-brand-600">${t.autoReply.subtitle}</p>
                   <p className="mt-3 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">${t.autoReply.tip}</p>
-                </div>
-              </section>
-            `
-          : null}
-
-        ${view === 'amazonMailConfig'
-          ? html`
-              <section className="space-y-4">
-                <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
-                  <h4 className="text-sm font-semibold">${t.amazonMail.accountCardTitle}</h4>
-
-                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                    <label className="block">
-                      <span className="mb-1 block text-xs font-medium text-brand-700">${t.amazonMail.accountLabel}</span>
-                      <input
-                        type="email"
-                        name="amazon_email_account"
-                        autoComplete="off"
-                        value=${amazonEmailAccount}
-                        onChange=${(e) => setAmazonEmailAccount(e.target.value)}
-                        className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
-                        placeholder="seller@example.com"
-                      />
-                    </label>
-
-                    <label className="block">
-                      <span className="mb-1 block text-xs font-medium text-brand-700">${t.amazonMail.passwordLabel}</span>
-                      <input
-                        type="password"
-                        name="amazon_email_password"
-                        autoComplete="new-password"
-                        value=${amazonEmailPassword}
-                        onChange=${(e) => setAmazonEmailPassword(e.target.value)}
-                        className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
-                        placeholder="********"
-                      />
-                    </label>
-                  </div>
-
-                  <p className="mt-2 text-xs text-brand-600">${t.amazonMail.passwordHint}</p>
-                  <p className="mt-2 text-xs text-brand-700">
-                    ${amazonEmailHasPassword ? t.amazonMail.hasPassword : t.amazonMail.noPassword}
-                  </p>
-
-                  <div className="mt-4 rounded-lg border border-brand-100 bg-brand-50 p-3">
-                    <label className="inline-flex items-center gap-2 text-sm font-medium text-brand-800">
-                      <input
-                        type="checkbox"
-                        checked=${amazonSslEnabled}
-                        onChange=${(e) => setAmazonSslEnabled(Boolean(e.target.checked))}
-                      />
-                      <span>${t.amazonMail.sslEnabledLabel}</span>
-                    </label>
-
-                    <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                      <label className="block">
-                        <span className="mb-1 block text-xs font-medium text-brand-700">${t.amazonMail.sslHostLabel}</span>
-                        <input
-                          type="text"
-                          name="amazon_ssl_host"
-                          autoComplete="off"
-                          value=${amazonSslHost}
-                          onChange=${(e) => setAmazonSslHost(e.target.value)}
-                          disabled=${!amazonSslEnabled}
-                          className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm disabled:bg-brand-100 disabled:text-brand-400"
-                          placeholder="127.0.0.1"
-                        />
-                      </label>
-
-                      <label className="block">
-                        <span className="mb-1 block text-xs font-medium text-brand-700">${t.amazonMail.sslPortLabel}</span>
-                        <input
-                          type="number"
-                          name="amazon_ssl_port"
-                          autoComplete="off"
-                          min="1"
-                          max="65535"
-                          value=${amazonSslPort}
-                          onChange=${(e) => setAmazonSslPort(e.target.value)}
-                          disabled=${!amazonSslEnabled}
-                          className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm disabled:bg-brand-100 disabled:text-brand-400"
-                          placeholder="993"
-                        />
-                      </label>
-                    </div>
-                  </div>
-
-                  <p className="mt-3 text-xs text-brand-700">
-                    ${amazonEmailUpdatedAt ? `${t.amazonMail.updatedAt}: ${amazonEmailUpdatedAt}` : ''}
-                  </p>
-
-                  ${autoReplyNotice
-                    ? html`<p className="mt-3 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">${autoReplyNotice}</p>`
-                    : null}
-
-                  ${autoReplyLoading ? html`<p className="mt-3 text-sm text-brand-600">${t.loading}</p>` : null}
-
                   <div className="mt-4 flex flex-wrap gap-2">
                     <button
-                      onClick=${onSaveAmazonEmailSettings}
-                      disabled=${Boolean(autoReplyLoading)}
-                      className=${`rounded-md px-4 py-2 text-sm font-semibold ${
-                        autoReplyLoading
-                          ? 'cursor-not-allowed bg-brand-200 text-white'
-                          : 'bg-brand-700 text-white hover:bg-brand-800'
-                      }`}
-                    >
-                      ${t.amazonMail.saveBtn}
-                    </button>
-                    <button
-                      onClick=${loadAmazonEmailSettings}
-                      disabled=${Boolean(autoReplyLoading)}
+                      onClick=${onFetchCustomerMessages}
+                      disabled=${Boolean(mailLoading)}
                       className=${`rounded-md border px-4 py-2 text-sm font-semibold ${
-                        autoReplyLoading
+                        mailLoading
                           ? 'cursor-not-allowed border-brand-100 bg-brand-50 text-brand-300'
                           : 'border-brand-300 bg-white text-brand-700 hover:bg-brand-50'
                       }`}
                     >
-                      ${t.amazonMail.reloadBtn}
+                      ${t.autoReply.fetchBtn}
+                    </button>
+                    <button
+                      onClick=${loadCustomerMessages}
+                      disabled=${Boolean(mailLoading)}
+                      className=${`rounded-md border px-4 py-2 text-sm font-semibold ${
+                        mailLoading
+                          ? 'cursor-not-allowed border-brand-100 bg-brand-50 text-brand-300'
+                          : 'border-brand-300 bg-white text-brand-700 hover:bg-brand-50'
+                      }`}
+                    >
+                      ${t.autoReply.reloadBtn}
                     </button>
                   </div>
+                  ${mailLoading ? html`<p className="mt-3 text-sm text-brand-600">${t.loading}</p>` : null}
+                  ${mailNotice
+                    ? html`<p className="mt-3 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-800">${mailNotice}</p>`
+                    : null}
+                </div>
+
+                <div className="overflow-x-auto rounded-xl border border-brand-100 bg-white shadow-sm">
+                  <table className="min-w-[1100px] divide-y divide-brand-100 text-sm">
+                    <thead className="bg-brand-50">
+                      <tr>
+                        <th className="px-3 py-3 text-left font-semibold">${t.autoReply.buyerMessage}</th>
+                        <th className="px-3 py-3 text-left font-semibold">${t.autoReply.aiReply}</th>
+                        <th className="px-3 py-3 text-left font-semibold">${t.autoReply.editReply}</th>
+                        <th className="px-3 py-3 text-left font-semibold">${t.autoReply.status}</th>
+                        <th className="px-3 py-3 text-left font-semibold">${t.autoReply.createdAt}</th>
+                        <th className="px-3 py-3 text-left font-semibold">${t.autoReply.actions}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-brand-50">
+                      ${mailRows.length
+                        ? mailRows.map(
+                            (row) => html`
+                              <tr key=${row.id} className="align-top hover:bg-brand-50/70">
+                                <td className="px-3 py-3">
+                                  <div className="whitespace-pre-wrap break-words text-brand-900">${row.buyer_message || '-'}</div>
+                                </td>
+                                <td className="px-3 py-3">
+                                  <div className="whitespace-pre-wrap break-words text-brand-700">${row.ai_reply || '-'}</div>
+                                </td>
+                                <td className="px-3 py-3">
+                                  <textarea
+                                    value=${replyDrafts[row.id] || ''}
+                                    onChange=${(e) =>
+                                      setReplyDrafts((prev) => ({ ...prev, [row.id]: e.target.value }))}
+                                    rows="3"
+                                    className="w-full rounded-md border border-brand-200 bg-white px-2 py-1 text-sm"
+                                  />
+                                </td>
+                                <td className="px-3 py-3">
+                                  <span className="rounded-full border border-brand-200 bg-brand-50 px-2 py-1 text-xs font-semibold text-brand-700">
+                                    ${row.status || '-'}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-3 text-brand-600">${formatDateTime(row.created_at)}</td>
+                                <td className="px-3 py-3">
+                                  <div className="flex flex-wrap gap-2">
+                                    <button
+                                      onClick=${() => onProcessMessage(row.id)}
+                                      disabled=${Boolean(mailLoading)}
+                                      className="rounded-md border border-brand-300 bg-white px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50"
+                                    >
+                                      ${t.autoReply.processBtn}
+                                    </button>
+                                    <button
+                                      onClick=${() => onSaveReply(row.id)}
+                                      disabled=${Boolean(mailLoading) || !String(replyDrafts[row.id] || '').trim()}
+                                      className="rounded-md border border-brand-300 bg-white px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50 disabled:cursor-not-allowed disabled:border-brand-100 disabled:bg-brand-50 disabled:text-brand-300"
+                                    >
+                                      ${t.autoReply.saveBtn}
+                                    </button>
+                                    <button
+                                      onClick=${() => onApproveMessage(row.id)}
+                                      disabled=${Boolean(mailLoading)}
+                                      className="rounded-md border border-brand-300 bg-white px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50"
+                                    >
+                                      ${t.autoReply.approveBtn}
+                                    </button>
+                                    <button
+                                      onClick=${() => onSendMessage(row.id)}
+                                      disabled=${Boolean(mailLoading) || row.status !== 'approved'}
+                                      className="rounded-md bg-brand-700 px-2 py-1 text-xs font-semibold text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-brand-200"
+                                    >
+                                      ${t.autoReply.sendBtn}
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            `,
+                          )
+                        : html`
+                            <tr>
+                              <td colSpan="6" className="px-3 py-5 text-center text-sm text-brand-600">
+                                ${t.autoReply.empty}
+                              </td>
+                            </tr>
+                          `}
+                    </tbody>
+                  </table>
                 </div>
               </section>
             `
@@ -2177,7 +2451,7 @@ function App() {
                             ${t.userMgmt.reload}
                           </button>
                         </div>
-                        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-6">
+                        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
                           <input
                             type="text"
                             name="new_user_username"
@@ -2188,15 +2462,6 @@ function App() {
                             placeholder=${t.userMgmt.username}
                           />
                           <input
-                            type="email"
-                            name="new_user_email"
-                            autoComplete="off"
-                            value=${newUserEmail}
-                            onChange=${(e) => setNewUserEmail(e.target.value)}
-                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
-                            placeholder=${t.userMgmt.email}
-                          />
-                          <input
                             type="password"
                             name="new_user_password"
                             autoComplete="new-password"
@@ -2204,24 +2469,6 @@ function App() {
                             onChange=${(e) => setNewUserPassword(e.target.value)}
                             className="rounded-md border border-brand-200 px-3 py-2 text-sm"
                             placeholder=${t.userMgmt.password}
-                          />
-                          <input
-                            type="text"
-                            name="new_user_lingxing_account"
-                            autoComplete="off"
-                            value=${newUserLingxingAccount}
-                            onChange=${(e) => setNewUserLingxingAccount(e.target.value)}
-                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
-                            placeholder=${t.userMgmt.lingxingAccount}
-                          />
-                          <input
-                            type="password"
-                            name="new_user_lingxing_password"
-                            autoComplete="new-password"
-                            value=${newUserLingxingPassword}
-                            onChange=${(e) => setNewUserLingxingPassword(e.target.value)}
-                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
-                            placeholder=${t.userMgmt.lingxingPassword}
                           />
                           <select
                             value=${newUserRole}
@@ -2257,7 +2504,7 @@ function App() {
                               <article key=${user.user_id} className="rounded-lg border border-brand-100 p-3">
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                   <div className="text-sm">
-                                    <div className="font-semibold">${user.username} (${user.email})</div>
+                                    <div className="font-semibold">${user.username}</div>
                                     <div className="text-brand-600">${t.userMgmt.status}: ${user.status}</div>
                                   </div>
                                   <div className="flex flex-wrap items-center gap-2">
@@ -2292,7 +2539,7 @@ function App() {
                                   </div>
                                 </div>
 
-                                <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-4">
+                                <div className="mt-3 flex flex-wrap items-center gap-2">
                                   <input
                                     type="password"
                                     name=${`reset_user_password_${user.user_id}`}
@@ -2303,29 +2550,9 @@ function App() {
                                     className="rounded-md border border-brand-200 px-3 py-1 text-sm"
                                     placeholder=${t.userMgmt.password}
                                   />
-                                  <input
-                                    type="text"
-                                    name=${`reset_user_lingxing_account_${user.user_id}`}
-                                    autoComplete="off"
-                                    value=${userLingxingAccountDrafts[user.user_id] || ''}
-                                    onChange=${(e) =>
-                                      setUserLingxingAccountDrafts((prev) => ({ ...prev, [user.user_id]: e.target.value }))}
-                                    className="rounded-md border border-brand-200 px-3 py-1 text-sm"
-                                    placeholder=${t.userMgmt.lingxingAccount}
-                                  />
-                                  <input
-                                    type="password"
-                                    name=${`reset_user_lingxing_password_${user.user_id}`}
-                                    autoComplete="new-password"
-                                    value=${userLingxingPasswordDrafts[user.user_id] || ''}
-                                    onChange=${(e) =>
-                                      setUserLingxingPasswordDrafts((prev) => ({ ...prev, [user.user_id]: e.target.value }))}
-                                    className="rounded-md border border-brand-200 px-3 py-1 text-sm"
-                                    placeholder=${t.userMgmt.lingxingPassword}
-                                  />
                                   <button
                                     onClick=${() => onResetManagedUserPassword(user.user_id)}
-                                    className="rounded-md border border-brand-300 bg-white px-3 py-1 text-sm font-semibold text-brand-700 hover:bg-brand-50 md:justify-self-start"
+                                    className="rounded-md border border-brand-300 bg-white px-3 py-1 text-sm font-semibold text-brand-700 hover:bg-brand-50"
                                   >
                                     ${t.userMgmt.resetPwd}
                                   </button>

@@ -18,6 +18,7 @@ class AuthSettings:
     jwt_secret_key: str
     jwt_algorithm: str
     jwt_expire_minutes: int
+    jwt_refresh_expire_days: int
     bcrypt_rounds: int
     bootstrap_admin_username: str
     bootstrap_admin_email: str
@@ -33,12 +34,17 @@ def get_auth_settings() -> AuthSettings:
         load_dotenv()
 
     jwt_expire_minutes_raw = os.getenv("JWT_EXPIRE_MINUTES", "120").strip()
+    jwt_refresh_expire_days_raw = os.getenv("JWT_REFRESH_EXPIRE_DAYS", "30").strip()
     bcrypt_rounds_raw = os.getenv("BCRYPT_ROUNDS", "12").strip()
 
     try:
         jwt_expire_minutes = max(5, int(jwt_expire_minutes_raw))
     except ValueError:
         jwt_expire_minutes = 120
+    try:
+        jwt_refresh_expire_days = max(1, int(jwt_refresh_expire_days_raw))
+    except ValueError:
+        jwt_refresh_expire_days = 30
 
     try:
         bcrypt_rounds = min(16, max(10, int(bcrypt_rounds_raw)))
@@ -56,6 +62,7 @@ def get_auth_settings() -> AuthSettings:
         jwt_secret_key=os.getenv("JWT_SECRET_KEY", "change-me-in-production").strip(),
         jwt_algorithm=os.getenv("JWT_ALGORITHM", "HS256").strip() or "HS256",
         jwt_expire_minutes=jwt_expire_minutes,
+        jwt_refresh_expire_days=jwt_refresh_expire_days,
         bcrypt_rounds=bcrypt_rounds,
         bootstrap_admin_username=os.getenv("BOOTSTRAP_ADMIN_USERNAME", "admin").strip().lower() or "admin",
         bootstrap_admin_email=os.getenv("BOOTSTRAP_ADMIN_EMAIL", "admin@example.com").strip().lower(),

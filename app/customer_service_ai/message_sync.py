@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-from .sp_api import AmazonSPMessagingClient, IncomingBuyerMessage
+from .sp_api import IncomingBuyerMessage, LingxingMessagingClient
 
 
 class MessageSyncService:
-    """Wrapper around SP-API client for buyer-message synchronization."""
+    """Wrapper around Lingxing client for buyer-message synchronization."""
 
-    def __init__(self, client: AmazonSPMessagingClient, external_store_id: str | None = None) -> None:
+    def __init__(self, client: LingxingMessagingClient, store_name: str, sid: int | None = None) -> None:
         self.client = client
-        self.external_store_id = external_store_id
+        self.store_name = store_name
+        self.sid = sid
 
     def fetch_messages(self) -> list[IncomingBuyerMessage]:
-        """Fetch buyer messages, optionally scoped to a store identifier."""
+        """Fetch buyer messages for the scoped store."""
 
-        return self.client.fetch_buyer_messages(external_store_id=self.external_store_id)
+        return self.client.fetch_buyer_messages(store_name=self.store_name, sid=self.sid)

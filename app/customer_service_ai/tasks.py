@@ -17,7 +17,7 @@ from .reply_generation import ReplyGenerationService
 from .risk_detection import ProductIssueExtractionService, RiskDetectionService
 from .sentiment_analysis import SentimentAnalysisService
 from .service import fetch_and_store_messages, process_message_pipeline, send_approved_reply
-from .sp_api import AmazonSPMessagingClient
+from .sp_api import LingxingMessagingClient
 
 
 @celery_app.task(name="customer_service.fetch_buyer_messages")
@@ -31,11 +31,15 @@ def fetch_buyer_messages_task(
     init_customer_service_schema()
     db = SessionLocal()
     try:
-        sp_client = AmazonSPMessagingClient()
+        client = LingxingMessagingClient()
         store = db.get(Store, store_id)
+        if store is None:
+            raise RuntimeError(f"Store {store_id} not found")
+        target_store = client.resolve_store(external_store_id=store.external_store_id)
         sync_service = MessageSyncService(
-            client=sp_client,
-            external_store_id=store.external_store_id if store is not None else None,
+            client=client,
+            store_name=target_store.store_name,
+            sid=target_store.sid,
         )
         storage_service = MessageStorageService()
         result = fetch_and_store_messages(
@@ -80,7 +84,11 @@ def process_message_task(
     init_customer_service_schema()
     db = SessionLocal()
     try:
-        sp_client = AmazonSPMessagingClient()
+        client = LingxingMessagingClient()
+        store = db.get(Store, store_id)
+        if store is None:
+            raise RuntimeError(f"Store {store_id} not found")
+        target_store = client.resolve_store(external_store_id=store.external_store_id)
         result = process_message_pipeline(
             db=db,
             message_id=message_id,
@@ -94,7 +102,11 @@ def process_message_task(
             reply_service=ReplyGenerationService(),
             auto_reply_engine=AutoReplyEngine(),
             human_review_engine=HumanReviewEngine(),
-            send_service=MessageSendService(client=sp_client),
+            send_service=MessageSendService(
+                client=client,
+                store_name=target_store.store_name,
+                sid=target_store.sid,
+            ),
             force_regenerate=force_regenerate,
             allow_auto_send=allow_auto_send,
         )
@@ -123,13 +135,21 @@ def send_approved_reply_task(tenant_id: int, store_id: int, message_id: int) -> 
     init_customer_service_schema()
     db = SessionLocal()
     try:
-        sp_client = AmazonSPMessagingClient()
+        client = LingxingMessagingClient()
+        store = db.get(Store, store_id)
+        if store is None:
+            raise RuntimeError(f"Store {store_id} not found")
+        target_store = client.resolve_store(external_store_id=store.external_store_id)
         message, sp_result = send_approved_reply(
             db=db,
             message_id=message_id,
             tenant_id=tenant_id,
             store_id=store_id,
-            send_service=MessageSendService(client=sp_client),
+            send_service=MessageSendService(
+                client=client,
+                store_name=target_store.store_name,
+                sid=target_store.sid,
+            ),
         )
         return {
             "tenant_id": tenant_id,

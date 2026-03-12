@@ -88,8 +88,6 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    lingxing_erp_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    lingxing_erp_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.role_id"), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default=UserStatus.ACTIVE.value)
     created_at: Mapped[datetime] = mapped_column(

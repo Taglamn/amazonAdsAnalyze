@@ -98,8 +98,6 @@ def create_user(
     username: str,
     email: str,
     password: str,
-    lingxing_erp_username: str | None = None,
-    lingxing_erp_password: str | None = None,
     role_name: str,
     tenant_id: int,
     status: str = UserStatus.ACTIVE.value,
@@ -125,8 +123,6 @@ def create_user(
         username=normalized_username,
         email=normalized_email,
         password_hash=hash_password(password),
-        lingxing_erp_username=(lingxing_erp_username or "").strip() or None,
-        lingxing_erp_password=(lingxing_erp_password or "").strip() or None,
         role_id=role.role_id,
         status=status,
     )
@@ -203,32 +199,14 @@ def set_user_status(db: Session, *, user_id: int, active: bool) -> User:
     return user
 
 
-def reset_password(
-    db: Session,
-    *,
-    user_id: int,
-    new_password: str | None = None,
-    lingxing_erp_username: str | None = None,
-    lingxing_erp_password: str | None = None,
-) -> User:
-    """Reset password and/or Lingxing ERP credentials for a user."""
+def reset_password(db: Session, *, user_id: int, new_password: str) -> User:
+    """Reset a user's password with bcrypt re-hashing."""
 
     user = get_user_by_id(db, user_id)
     if user is None:
         raise CRUDValidationError(f"User {user_id} not found")
 
-    if not new_password and lingxing_erp_username is None and lingxing_erp_password is None:
-        raise CRUDValidationError("At least one field must be provided")
-
-    if new_password:
-        user.password_hash = hash_password(new_password)
-    if lingxing_erp_username is not None:
-        normalized = lingxing_erp_username.strip()
-        user.lingxing_erp_username = normalized or None
-    if lingxing_erp_password is not None:
-        normalized = lingxing_erp_password.strip()
-        user.lingxing_erp_password = normalized or None
-
+    user.password_hash = hash_password(new_password)
     db.add(user)
     db.commit()
     db.refresh(user)

@@ -41,17 +41,56 @@ def create_access_token(*, user_id: int, tenant_id: int, role: str, email: str) 
         "tenant_id": tenant_id,
         "role": role,
         "email": email,
+        "typ": "access",
         "iat": int(now.timestamp()),
         "exp": int(expires_at.timestamp()),
     }
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
-def decode_access_token(token: str) -> dict[str, Any]:
-    """Decode and validate JWT token."""
+def create_refresh_token(*, user_id: int, tenant_id: int, role: str, email: str) -> str:
+    """Create JWT refresh token with longer expiry window."""
+
+    settings = get_auth_settings()
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(days=settings.jwt_refresh_expire_days)
+    payload: dict[str, Any] = {
+        "sub": str(user_id),
+        "tenant_id": tenant_id,
+        "role": role,
+        "email": email,
+        "typ": "refresh",
+        "iat": int(now.timestamp()),
+        "exp": int(expires_at.timestamp()),
+    }
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+def _decode_jwt(token: str) -> dict[str, Any]:
+    """Decode and validate JWT token signature/time window."""
 
     settings = get_auth_settings()
     try:
         return jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
     except JWTError as exc:
         raise AuthError("Invalid or expired token") from exc
+
+
+def decode_access_token(token: str) -> dict[str, Any]:
+    """Decode and validate JWT access token."""
+
+    payload = _decode_jwt(token)
+    token_type = str(payload.get("typ") or "access").strip().lower()
+    if token_type != "access":
+        raise AuthError("Invalid token type")
+    return payload
+
+
+def decode_refresh_token(token: str) -> dict[str, Any]:
+    """Decode and validate JWT refresh token."""
+
+    payload = _decode_jwt(token)
+    token_type = str(payload.get("typ") or "").strip().lower()
+    if token_type != "refresh":
+        raise AuthError("Invalid token type")
+    return payload

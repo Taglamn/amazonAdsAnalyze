@@ -22,7 +22,7 @@ from .crud import (
 from .config import get_auth_settings
 from .database import get_db_session
 from .dependencies import get_current_user, require_roles
-from .models import RoleName, User
+from .models import RoleName, User, UserStatus
 from .schemas import (
     AccessibleStoresResponse,
     AdminCreateUserRequest,
@@ -30,6 +30,7 @@ from .schemas import (
     MeResponse,
     PasswordResetRequest,
     PermissionCheckResponse,
+    RefreshTokenRequest,
     SetStoreAccessRequest,
     TokenResponse,
     UserListResponse,
@@ -39,9 +40,16 @@ from .schemas import (
     UserStoreAccessListResponse,
     UserStatusRequest,
 )
-from .security import create_access_token
+from .security import AuthError, create_access_token, create_refresh_token, decode_refresh_token
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+def _build_default_email_from_username(username: str) -> str:
+    """Generate a deterministic placeholder email for username-only onboarding."""
+
+    normalized = username.strip().lower()
+    return f"{normalized}@local.invalid"
 
 
 def _to_user_out(user: User) -> UserOut:
@@ -51,7 +59,6 @@ def _to_user_out(user: User) -> UserOut:
         user_id=user.user_id,
         username=user.username,
         email=user.email,
-        lingxing_erp_username=user.lingxing_erp_username,
         tenant_id=user.tenant_id,
         role_id=user.role_id,
         role=user.role.name if user.role else "",
@@ -71,8 +78,6 @@ def register_user(payload: UserRegisterRequest, db: Session = Depends(get_db_ses
             username=(payload.username or str(payload.email).split("@", 1)[0]),
             email=payload.email,
             password=payload.password,
-            lingxing_erp_username=payload.lingxing_erp_username,
-            lingxing_erp_password=payload.lingxing_erp_password,
             role_name=payload.role.value,
             tenant_id=payload.tenant_id,
         )
@@ -97,10 +102,8 @@ def create_user_by_admin(
         created = create_user(
             db,
             username=payload.username,
-            email=payload.email,
+            email=_build_default_email_from_username(payload.username),
             password=payload.password,
-            lingxing_erp_username=payload.lingxing_erp_username,
-            lingxing_erp_password=payload.lingxing_erp_password,
             role_name=payload.role.value,
             tenant_id=current_user.tenant_id,
         )
@@ -122,13 +125,61 @@ def login_user(payload: UserLoginRequest, db: Session = Depends(get_db_session))
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid account or password")
 
-    token = create_access_token(
+    access_token = create_access_token(
         user_id=user.user_id,
         tenant_id=user.tenant_id,
         role=user.role.name if user.role else "",
         email=user.email,
     )
-    return TokenResponse(access_token=token, expires_in=get_auth_settings().jwt_expire_minutes * 60)
+    refresh_token = create_refresh_token(
+        user_id=user.user_id,
+        tenant_id=user.tenant_id,
+        role=user.role.name if user.role else "",
+        email=user.email,
+    )
+    settings = get_auth_settings()
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_in=settings.jwt_expire_minutes * 60,
+        refresh_expires_in=settings.jwt_refresh_expire_days * 24 * 3600,
+    )
+
+
+@router.post("/refresh", response_model=TokenResponse)
+def refresh_access_token(payload: RefreshTokenRequest, db: Session = Depends(get_db_session)) -> TokenResponse:
+    """Refresh access token using a valid refresh token."""
+
+    try:
+        claims = decode_refresh_token(payload.refresh_token.strip())
+        user_id = int(claims["sub"])
+        tenant_id = int(claims["tenant_id"])
+    except (KeyError, ValueError, AuthError) as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token") from exc
+
+    user = db.get(User, user_id)
+    if user is None or user.tenant_id != tenant_id or user.status != UserStatus.ACTIVE.value:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token is no longer valid")
+
+    access_token = create_access_token(
+        user_id=user.user_id,
+        tenant_id=user.tenant_id,
+        role=user.role.name if user.role else "",
+        email=user.email,
+    )
+    refresh_token = create_refresh_token(
+        user_id=user.user_id,
+        tenant_id=user.tenant_id,
+        role=user.role.name if user.role else "",
+        email=user.email,
+    )
+    settings = get_auth_settings()
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_in=settings.jwt_expire_minutes * 60,
+        refresh_expires_in=settings.jwt_refresh_expire_days * 24 * 3600,
+    )
 
 
 @router.get("/me", response_model=MeResponse)
@@ -306,13 +357,7 @@ def reset_user_password(
 
     try:
         ensure_user_same_tenant(current_user, target)
-        updated = reset_password(
-            db,
-            user_id=user_id,
-            new_password=payload.new_password,
-            lingxing_erp_username=payload.lingxing_erp_username,
-            lingxing_erp_password=payload.lingxing_erp_password,
-        )
+        updated = reset_password(db, user_id=user_id, new_password=payload.new_password)
     except CRUDValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

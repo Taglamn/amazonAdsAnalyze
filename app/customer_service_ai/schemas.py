@@ -87,21 +87,3 @@ class SendOperationResponse(BaseModel):
     message_id: int
     status: MessageStatus
     sp_api_result: dict[str, Any]
-
-
-class AmazonEmailSettingsResponse(BaseModel):
-    email_account: str
-    has_password: bool
-    ssl_enabled: bool
-    ssl_host: str
-    ssl_port: int
-    updated_at: str | None = None
-
-
-class AmazonEmailSettingsUpdateRequest(BaseModel):
-    email_account: str = Field(min_length=1, max_length=256)
-    email_password: str | None = Field(default=None, max_length=512)
-    keep_existing_password: bool = True
-    ssl_enabled: bool = True
-    ssl_host: str = Field(default="", max_length=255)
-    ssl_port: int = Field(default=993, ge=1, le=65535)

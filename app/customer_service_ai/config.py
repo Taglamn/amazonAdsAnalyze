@@ -18,11 +18,16 @@ class CustomerServiceSettings:
     llm_model: str
     openai_api_key: str
     gemini_api_key: str
-    sp_api_base_url: str
-    sp_api_access_token: str
-    sp_api_marketplace_id: str
-    sp_api_list_messages_path: str
-    sp_api_send_message_path: str
+    lingxing_list_messages_path: str
+    lingxing_list_messages_method: str
+    lingxing_list_messages_store_name_field: str
+    lingxing_list_messages_sid_field: str
+    lingxing_send_message_path: str
+    lingxing_send_message_method: str
+    lingxing_send_message_store_name_field: str
+    lingxing_send_message_sid_field: str
+    lingxing_send_message_conversation_field: str
+    lingxing_send_message_reply_field: str
     max_reply_chars: int
 
 
@@ -55,19 +60,45 @@ def get_customer_service_settings() -> CustomerServiceSettings:
         ),
         openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
         gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
-        sp_api_base_url=os.getenv(
-            "CUSTOMER_SERVICE_SP_API_BASE_URL",
-            "https://sellingpartnerapi-na.amazon.com",
+        lingxing_list_messages_path=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_PATH",
+            os.getenv("CUSTOMER_SERVICE_SP_API_LIST_MESSAGES_PATH", "/erp/sc/message/lists"),
         ).strip(),
-        sp_api_access_token=os.getenv("CUSTOMER_SERVICE_SP_API_ACCESS_TOKEN", "").strip(),
-        sp_api_marketplace_id=os.getenv("CUSTOMER_SERVICE_SP_API_MARKETPLACE_ID", "").strip(),
-        sp_api_list_messages_path=os.getenv(
-            "CUSTOMER_SERVICE_SP_API_LIST_MESSAGES_PATH",
-            "/messaging/v1/buyerMessages",
+        lingxing_list_messages_method=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_METHOD",
+            "POST",
+        ).strip().upper(),
+        lingxing_list_messages_store_name_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_STORE_NAME_FIELD",
+            "seller_name",
         ).strip(),
-        sp_api_send_message_path=os.getenv(
-            "CUSTOMER_SERVICE_SP_API_SEND_MESSAGE_PATH",
-            "/messaging/v1/conversations/{conversation_id}/messages",
+        lingxing_list_messages_sid_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_SID_FIELD",
+            "sid",
+        ).strip(),
+        lingxing_send_message_path=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_SEND_MESSAGE_PATH",
+            os.getenv("CUSTOMER_SERVICE_SP_API_SEND_MESSAGE_PATH", "/erp/sc/message/reply"),
+        ).strip(),
+        lingxing_send_message_method=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_SEND_MESSAGE_METHOD",
+            "POST",
+        ).strip().upper(),
+        lingxing_send_message_store_name_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_SEND_MESSAGE_STORE_NAME_FIELD",
+            "seller_name",
+        ).strip(),
+        lingxing_send_message_sid_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_SEND_MESSAGE_SID_FIELD",
+            "sid",
+        ).strip(),
+        lingxing_send_message_conversation_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_SEND_MESSAGE_CONVERSATION_FIELD",
+            "conversation_id",
+        ).strip(),
+        lingxing_send_message_reply_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_SEND_MESSAGE_REPLY_FIELD",
+            "reply",
         ).strip(),
         max_reply_chars=max_reply_chars,
     )

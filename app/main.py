@@ -34,6 +34,7 @@ from .gemini_bridge import (
     yesterday_metrics_from_rows,
 )
 from .lingxing_sync import sync_lingxing_data
+from .lingxing_sync_jobs import lingxing_sync_job_manager
 from .lingxing_client import LingxingClient, LingxingCredentials
 from .lingxing_context_package import build_lingxing_context_package
 from .ops_advisory import generate_periodic_advice
@@ -86,6 +87,14 @@ class WhitepaperRequest(BaseModel):
 
 class LingxingSyncRequest(BaseModel):
     store_id: Optional[str] = None
+    report_date: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    persist: bool = True
+
+
+class LingxingSyncJobRequest(BaseModel):
+    store_id: str
     report_date: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
@@ -166,23 +175,8 @@ def _build_stored_text_meta(content: str) -> Dict[str, Any]:
     }
 
 
-def _resolve_lingxing_credentials(current_user: User) -> LingxingCredentials:
-    """Resolve user-scoped Lingxing ERP credentials plus global app settings."""
-
+def _list_lingxing_bound_stores() -> List[Dict[str, Any]]:
     credentials = LingxingCredentials.from_env()
-    erp_username = str(current_user.lingxing_erp_username or "").strip()
-    erp_password = str(current_user.lingxing_erp_password or "").strip()
-    if not erp_username or not erp_password:
-        raise ValueError(
-            "Current user has not configured Lingxing ERP account/password. "
-            "Please update them in User Management."
-        )
-    credentials.erp_username = erp_username
-    credentials.erp_password = erp_password
-    return credentials
-
-
-def _list_lingxing_bound_stores(credentials: LingxingCredentials) -> List[Dict[str, Any]]:
     client = LingxingClient(credentials=credentials)
     access_token = client.generate_access_token()
     sellers = client.list_sellers(access_token=access_token)
@@ -190,8 +184,6 @@ def _list_lingxing_bound_stores(credentials: LingxingCredentials) -> List[Dict[s
     stores: List[Dict[str, Any]] = []
     for item in sellers:
         if int(item.get("status", 0) or 0) != 1:
-            continue
-        if int(item.get("has_ads_setting", 0) or 0) != 1:
             continue
 
         sid = int(item["sid"])
@@ -202,6 +194,7 @@ def _list_lingxing_bound_stores(credentials: LingxingCredentials) -> List[Dict[s
                 "store_name": str(item.get("name") or store_id),
                 "sid": sid,
                 "country": item.get("country"),
+                "has_ads_setting": int(item.get("has_ads_setting", 0) or 0) == 1,
                 "has_local_data": (
                     (PERFORMANCE_DIR / f"{store_id}.csv").exists()
                     and (HISTORY_DIR / f"{store_id}.csv").exists()
@@ -254,8 +247,20 @@ def list_stores(
         tenant_id=current_user.tenant_id,
         stores=[(item["store_id"], item["store_name"]) for item in local_stores],
     )
-    visible_store_ids = {item.external_store_id for item in list_accessible_stores(db, user=current_user)}
+    bound_stores: List[Dict[str, Any]] = []
+    bound_error: Optional[str] = None
+    if include_bound:
+        try:
+            bound_stores = _list_lingxing_bound_stores()
+            bulk_sync_stores(
+                db,
+                tenant_id=current_user.tenant_id,
+                stores=[(item["store_id"], item["store_name"]) for item in bound_stores],
+            )
+        except Exception as exc:  # noqa: BLE001
+            bound_error = str(exc)
 
+    visible_store_ids = {item.external_store_id for item in list_accessible_stores(db, user=current_user)}
     stores: List[Dict[str, Any]] = [
         {
             "store_id": item["store_id"],
@@ -267,29 +272,24 @@ def list_stores(
         if item["store_id"] in visible_store_ids
     ]
 
-    bound_error: Optional[str] = None
-    if include_bound:
-        try:
-            bound_stores = _list_lingxing_bound_stores(
-                credentials=_resolve_lingxing_credentials(current_user)
-            )
-            merged: Dict[str, Dict[str, Any]] = {item["store_id"]: item for item in stores}
-            for item in bound_stores:
-                existing = merged.get(item["store_id"])
-                if existing:
-                    existing["store_name"] = item["store_name"] or existing["store_name"]
-                    existing["sid"] = item.get("sid")
-                    existing["country"] = item.get("country")
-                    existing["source"] = "local+lingxing_bound"
-                else:
-                    if item["store_id"] in visible_store_ids:
-                        merged[item["store_id"]] = item
-            stores = sorted(
-                merged.values(),
-                key=lambda x: str(x.get("store_name") or x.get("store_id")),
-            )
-        except Exception as exc:  # noqa: BLE001
-            bound_error = str(exc)
+    if include_bound and bound_stores:
+        merged: Dict[str, Dict[str, Any]] = {item["store_id"]: item for item in stores}
+        for item in bound_stores:
+            if item["store_id"] not in visible_store_ids:
+                continue
+            existing = merged.get(item["store_id"])
+            if existing:
+                existing["store_name"] = item["store_name"] or existing["store_name"]
+                existing["sid"] = item.get("sid")
+                existing["country"] = item.get("country")
+                existing["source"] = "local+lingxing_bound"
+            else:
+                merged[item["store_id"]] = item
+
+        stores = sorted(
+            merged.values(),
+            key=lambda x: str(x.get("store_name") or x.get("store_id")),
+        )
 
     return {
         "stores": stores,
@@ -542,14 +542,12 @@ def sync_lingxing(
     _ensure_store_scope(db, current_user, payload.store_id)
 
     try:
-        credentials = _resolve_lingxing_credentials(current_user)
         result = sync_lingxing_data(
             store_id=payload.store_id,
             report_date=payload.report_date,
             start_date=payload.start_date,
             end_date=payload.end_date,
             persist=payload.persist,
-            credentials=credentials,
         )
         if payload.persist:
             store_repo.invalidate()
@@ -557,6 +555,73 @@ def sync_lingxing(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return result
+
+
+@app.post("/api/lingxing/sync/jobs", status_code=202)
+def create_lingxing_sync_job(
+    payload: LingxingSyncJobRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    _ensure_store_scope(db, current_user, payload.store_id)
+
+    def _sync_runner(
+        store_id: str,
+        report_date: Optional[str],
+        start_date: Optional[str],
+        end_date: Optional[str],
+        persist: bool,
+    ) -> Dict[str, Any]:
+        result = sync_lingxing_data(
+            store_id=store_id,
+            report_date=report_date,
+            start_date=start_date,
+            end_date=end_date,
+            persist=persist,
+        )
+        if persist:
+            store_repo.invalidate()
+        return result
+
+    try:
+        return lingxing_sync_job_manager.create_job(
+            store_id=payload.store_id,
+            report_date=payload.report_date,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            persist=payload.persist,
+            sync_func=_sync_runner,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/lingxing/sync/jobs/{job_id}")
+def get_lingxing_sync_job(
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    job_store_id = lingxing_sync_job_manager.get_job_store_id(job_id)
+    if not job_store_id:
+        raise HTTPException(status_code=404, detail="Lingxing sync job not found")
+    _ensure_store_scope(db, current_user, job_store_id)
+
+    job = lingxing_sync_job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Lingxing sync job not found")
+    return job
+
+
+@app.get("/api/lingxing/sync/jobs/latest/by-store")
+def get_latest_lingxing_sync_job(
+    store_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    _ensure_store_scope(db, current_user, store_id)
+    job = lingxing_sync_job_manager.get_latest_job_for_store(store_id)
+    return {"store_id": store_id, "job": job}
 
 
 @app.post("/api/ops/sync/incremental")
@@ -568,11 +633,9 @@ def sync_ops_incremental(
     _ensure_store_scope(db, current_user, payload.store_id)
 
     try:
-        credentials = _resolve_lingxing_credentials(current_user)
         result = incremental_sync_store(
             store_id=payload.store_id,
             persist_csv=payload.persist_csv,
-            credentials=credentials,
         )
         if payload.persist_csv:
             store_repo.invalidate()
@@ -639,16 +702,12 @@ def create_lingxing_context_package_job(
     _ensure_store_scope(db, current_user, payload.store_id)
 
     try:
-        credentials = _resolve_lingxing_credentials(current_user)
         result = context_export_job_manager.create_job(
             store_id=payload.store_id,
             start_date=payload.start_date,
             end_date=payload.end_date,
             days=payload.days,
-            build_func=lambda **kwargs: build_lingxing_context_package(
-                credentials=credentials,
-                **kwargs,
-            ),
+            build_func=build_lingxing_context_package,
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -712,13 +771,11 @@ def export_lingxing_context_package(
     _ensure_store_scope(db, current_user, payload.store_id)
 
     try:
-        credentials = _resolve_lingxing_credentials(current_user)
         package = build_lingxing_context_package(
             store_id=payload.store_id,
             start_date=payload.start_date,
             end_date=payload.end_date,
             days=payload.days,
-            credentials=credentials,
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc

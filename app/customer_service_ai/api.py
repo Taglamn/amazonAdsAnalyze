@@ -19,8 +19,6 @@ from .message_sync import MessageSyncService
 from .reply_generation import ReplyGenerationService
 from .risk_detection import ProductIssueExtractionService, RiskDetectionService
 from .schemas import (
-    AmazonEmailSettingsResponse,
-    AmazonEmailSettingsUpdateRequest,
     BuyerMessageListResponse,
     EditReplyRequest,
     FetchMessagesRequest,
@@ -44,15 +42,19 @@ from .service import (
     send_approved_reply,
     update_final_reply,
 )
-from .settings_store import amazon_email_settings_store
-from .sp_api import AmazonSPMessagingClient
+from .sp_api import LingxingBoundStore, LingxingMessagingClient, MessagingAPIError
 from .tasks import fetch_buyer_messages_task, process_message_task, send_approved_reply_task
 
 router = APIRouter(prefix="/api/customer-service", tags=["customer-service"])
 
 
 RoleDependency = Depends(require_roles(RoleName.ADMIN, RoleName.MANAGER, RoleName.STAFF))
-ManagerRoleDependency = Depends(require_roles(RoleName.ADMIN, RoleName.MANAGER))
+
+
+def _build_message_client() -> LingxingMessagingClient:
+    """Build Lingxing messaging client using environment credentials."""
+
+    return LingxingMessagingClient()
 
 
 def _resolve_scoped_store(
@@ -88,55 +90,41 @@ def _resolve_scoped_store(
     return store.store_id
 
 
-@router.get("/settings/amazon-email", response_model=AmazonEmailSettingsResponse)
-def get_amazon_email_settings(current_user: User = ManagerRoleDependency):
-    """Read Amazon messaging account configuration (manager/admin only)."""
+def _resolve_target_fetch_store(
+    *,
+    db: Session,
+    current_user: User,
+    external_store_id: str,
+    client: LingxingMessagingClient,
+) -> tuple[LingxingBoundStore, int]:
+    """Resolve exactly one target store for message sync."""
 
-    _ = current_user
-    settings = amazon_email_settings_store.load()
-    return AmazonEmailSettingsResponse(
-        email_account=settings.email_account,
-        has_password=bool(settings.email_password),
-        ssl_enabled=settings.ssl_enabled,
-        ssl_host=settings.ssl_host,
-        ssl_port=settings.ssl_port,
-        updated_at=settings.updated_at,
+    selector = external_store_id.strip()
+    if selector in {"all", "__all__", "*"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Please pass a concrete store_id from the current store selector",
+        )
+
+    bound_stores = client.list_bound_stores()
+    selected = [
+        item
+        for item in bound_stores
+        if item.external_store_id == selector or item.store_name == selector
+    ]
+    if not selected:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Lingxing store not found: {selector}",
+        )
+
+    target = selected[0]
+    internal_store_id = _resolve_scoped_store(
+        db,
+        current_user=current_user,
+        external_store_id=target.external_store_id,
     )
-
-
-@router.put("/settings/amazon-email", response_model=AmazonEmailSettingsResponse)
-def update_amazon_email_settings(
-    payload: AmazonEmailSettingsUpdateRequest,
-    current_user: User = ManagerRoleDependency,
-):
-    """Update Amazon messaging account configuration (manager/admin only)."""
-
-    _ = current_user
-    current = amazon_email_settings_store.load()
-    incoming_password = (payload.email_password or "").strip()
-
-    if payload.keep_existing_password and not incoming_password:
-        final_password = current.email_password
-    else:
-        if not incoming_password:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="email_password is required")
-        final_password = incoming_password
-
-    saved = amazon_email_settings_store.save(
-        email_account=payload.email_account,
-        email_password=final_password,
-        ssl_enabled=payload.ssl_enabled,
-        ssl_host=payload.ssl_host,
-        ssl_port=payload.ssl_port,
-    )
-    return AmazonEmailSettingsResponse(
-        email_account=saved.email_account,
-        has_password=bool(saved.email_password),
-        ssl_enabled=saved.ssl_enabled,
-        ssl_host=saved.ssl_host,
-        ssl_port=saved.ssl_port,
-        updated_at=saved.updated_at,
-    )
+    return target, internal_store_id
 
 
 @router.post("/stores/{external_store_id}/messages/fetch", response_model=TaskQueuedResponse | InlineFetchResponse)
@@ -146,60 +134,72 @@ def fetch_messages(
     current_user: User = RoleDependency,
     db: Session = Depends(get_db_session),
 ):
-    """Fetch new buyer messages from SP-API for authorized store scope."""
-
-    internal_store_id = _resolve_scoped_store(
-        db,
-        current_user=current_user,
-        external_store_id=external_store_id,
-    )
+    """Fetch buyer messages from Lingxing API for one authorized store."""
 
     auto_process = payload.auto_process if payload.auto_generate is None else payload.auto_generate
-
-    if payload.async_mode:
-        task = fetch_buyer_messages_task.delay(
-            tenant_id=current_user.tenant_id,
-            store_id=internal_store_id,
-            auto_process=auto_process,
+    try:
+        client = _build_message_client()
+        target_store, internal_store_id = _resolve_target_fetch_store(
+            db=db,
+            current_user=current_user,
+            external_store_id=external_store_id,
+            client=client,
         )
-        return TaskQueuedResponse(task_id=task.id)
-
-    sp_client = AmazonSPMessagingClient()
-    result = fetch_and_store_messages(
-        db=db,
-        tenant_id=current_user.tenant_id,
-        store_id=internal_store_id,
-        sync_service=MessageSyncService(client=sp_client, external_store_id=external_store_id),
-        storage_service=MessageStorageService(),
-    )
-
-    processed_count = 0
-    if auto_process:
-        for message_id in result.new_message_ids:
-            process_message_pipeline(
-                db=db,
-                message_id=message_id,
+        if payload.async_mode:
+            task = fetch_buyer_messages_task.delay(
                 tenant_id=current_user.tenant_id,
                 store_id=internal_store_id,
-                llm=CustomerServiceLLM(),
-                classification_service=MessageClassificationService(),
-                sentiment_service=SentimentAnalysisService(),
-                risk_service=RiskDetectionService(),
-                issue_service=ProductIssueExtractionService(),
-                reply_service=ReplyGenerationService(),
-                auto_reply_engine=AutoReplyEngine(),
-                human_review_engine=HumanReviewEngine(),
-                send_service=MessageSendService(client=sp_client),
-                force_regenerate=False,
-                allow_auto_send=True,
+                auto_process=auto_process,
             )
-            processed_count += 1
+            return TaskQueuedResponse(task_id=task.id)
 
-    return InlineFetchResponse(
-        fetched_count=result.fetched_count,
-        created_count=result.created_count,
-        processed_count=processed_count,
-    )
+        result = fetch_and_store_messages(
+            db=db,
+            tenant_id=current_user.tenant_id,
+            store_id=internal_store_id,
+            sync_service=MessageSyncService(
+                client=client,
+                store_name=target_store.store_name,
+                sid=target_store.sid,
+            ),
+            storage_service=MessageStorageService(),
+        )
+        fetched_count = result.fetched_count
+        created_count = result.created_count
+        processed_count = 0
+
+        if auto_process:
+            for message_id in result.new_message_ids:
+                process_message_pipeline(
+                    db=db,
+                    message_id=message_id,
+                    tenant_id=current_user.tenant_id,
+                    store_id=internal_store_id,
+                    llm=CustomerServiceLLM(),
+                    classification_service=MessageClassificationService(),
+                    sentiment_service=SentimentAnalysisService(),
+                    risk_service=RiskDetectionService(),
+                    issue_service=ProductIssueExtractionService(),
+                    reply_service=ReplyGenerationService(),
+                    auto_reply_engine=AutoReplyEngine(),
+                    human_review_engine=HumanReviewEngine(),
+                    send_service=MessageSendService(
+                        client=client,
+                        store_name=target_store.store_name,
+                        sid=target_store.sid,
+                    ),
+                    force_regenerate=False,
+                    allow_auto_send=True,
+                )
+                processed_count += 1
+
+        return InlineFetchResponse(
+            fetched_count=fetched_count,
+            created_count=created_count,
+            processed_count=processed_count,
+        )
+    except (MessagingAPIError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/stores/{external_store_id}/messages", response_model=BuyerMessageListResponse)
@@ -259,6 +259,8 @@ def process_message(
         return TaskQueuedResponse(task_id=task.id)
 
     try:
+        client = _build_message_client()
+        target_store = client.resolve_store(external_store_id=external_store_id)
         result = process_message_pipeline(
             db=db,
             message_id=message_id,
@@ -272,10 +274,16 @@ def process_message(
             reply_service=ReplyGenerationService(),
             auto_reply_engine=AutoReplyEngine(),
             human_review_engine=HumanReviewEngine(),
-            send_service=MessageSendService(client=AmazonSPMessagingClient()),
+            send_service=MessageSendService(
+                client=client,
+                store_name=target_store.store_name,
+                sid=target_store.sid,
+            ),
             force_regenerate=payload.force_regenerate,
             allow_auto_send=payload.allow_auto_send,
         )
+    except MessagingAPIError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except MessageNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except MessageStateError as exc:
@@ -374,7 +382,7 @@ def send_message(
     current_user: User = RoleDependency,
     db: Session = Depends(get_db_session),
 ):
-    """Send approved reply for scoped message via Amazon SP-API."""
+    """Send approved reply for scoped message via Lingxing API."""
 
     internal_store_id = _resolve_scoped_store(
         db,
@@ -391,13 +399,21 @@ def send_message(
         return TaskQueuedResponse(task_id=task.id)
 
     try:
+        client = _build_message_client()
+        target_store = client.resolve_store(external_store_id=external_store_id)
         message, sp_result = send_approved_reply(
             db=db,
             message_id=message_id,
             tenant_id=current_user.tenant_id,
             store_id=internal_store_id,
-            send_service=MessageSendService(client=AmazonSPMessagingClient()),
+            send_service=MessageSendService(
+                client=client,
+                store_name=target_store.store_name,
+                sid=target_store.sid,
+            ),
         )
+    except MessagingAPIError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except MessageNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except MessageStateError as exc:
@@ -417,7 +433,7 @@ def approve_and_send_message(
     current_user: User = RoleDependency,
     db: Session = Depends(get_db_session),
 ):
-    """Convenience endpoint: approve AI reply then send through SP-API."""
+    """Convenience endpoint: approve AI reply then send through Lingxing API."""
 
     _ = approve_message(
         external_store_id=external_store_id,

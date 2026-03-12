@@ -44,35 +44,11 @@ def _ensure_users_username_column() -> None:
             conn.execute(text(sql))
 
 
-def _ensure_users_lingxing_columns() -> None:
-    """Backfill users Lingxing credential columns for older environments."""
-
-    inspector = inspect(engine)
-    if "users" not in inspector.get_table_names():
-        return
-
-    existing_columns = {col["name"] for col in inspector.get_columns("users")}
-    add_sql: list[str] = []
-
-    if "lingxing_erp_username" not in existing_columns:
-        add_sql.append("ALTER TABLE users ADD COLUMN lingxing_erp_username VARCHAR(255)")
-    if "lingxing_erp_password" not in existing_columns:
-        add_sql.append("ALTER TABLE users ADD COLUMN lingxing_erp_password VARCHAR(255)")
-
-    if not add_sql:
-        return
-
-    with engine.begin() as conn:
-        for sql in add_sql:
-            conn.execute(text(sql))
-
-
 def init_auth_schema() -> None:
     """Create auth/RBAC tables and seed default roles and admin account."""
 
     Base.metadata.create_all(bind=engine)
     _ensure_users_username_column()
-    _ensure_users_lingxing_columns()
     settings = get_auth_settings()
 
     db: Session = SessionLocal()
