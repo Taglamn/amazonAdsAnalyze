@@ -4,6 +4,7 @@ import json
 from datetime import date, timedelta
 from dataclasses import dataclass
 from typing import Any
+import re
 
 from app.lingxing_client import LingxingApiError, LingxingClient, LingxingCredentials
 
@@ -111,13 +112,22 @@ class LingxingMessagingClient:
 
         payload: dict[str, Any] = {}
         email_map = self.settings.lingxing_list_messages_email_map
-        target_email = (
-            email
-            or email_map.get((external_store_id or "").strip(), "")
-            or email_map.get((store_name or "").strip(), "")
-            or (email_map.get(str(sid), "") if sid is not None else "")
-            or self.settings.lingxing_list_messages_email_value
-        ).strip()
+        target_email = ""
+        email_candidates = [
+            email_map.get((external_store_id or "").strip(), ""),
+            email_map.get((store_name or "").strip(), ""),
+            (email_map.get(str(sid), "") if sid is not None else ""),
+            self.settings.lingxing_list_messages_email_value,
+            email,
+        ]
+        for candidate in email_candidates:
+            candidate_text = str(candidate or "").strip()
+            if not candidate_text:
+                continue
+            if self._looks_like_email(candidate_text):
+                target_email = candidate_text
+                break
+
         if self.settings.lingxing_list_messages_email_field and not target_email:
             raise MessagingAPIError(
                 "Missing store email for Lingxing mail list API. "
@@ -340,6 +350,10 @@ class LingxingMessagingClient:
             if text:
                 return text
         return ""
+
+    @staticmethod
+    def _looks_like_email(value: str) -> bool:
+        return bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value or ""))
 
     def _extract_messages(self, payload: dict[str, Any]) -> list[IncomingBuyerMessage]:
         seen: set[tuple[str, str]] = set()
