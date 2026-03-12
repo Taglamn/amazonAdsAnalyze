@@ -211,6 +211,7 @@ class LingxingMessagingClient:
         *,
         store_name: str,
         sid: int | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Send reply for one conversation in one Lingxing store."""
 
@@ -223,6 +224,27 @@ class LingxingMessagingClient:
             payload[self.settings.lingxing_send_message_store_name_field] = store_name
         if sid is not None and self.settings.lingxing_send_message_sid_field:
             payload[self.settings.lingxing_send_message_sid_field] = sid
+        if attachments and self.settings.lingxing_send_message_attachments_field:
+            normalized_attachments: list[dict[str, Any]] = []
+            for item in attachments:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "").strip()
+                content = str(item.get("content_base64") or "").strip()
+                content_type = str(item.get("content_type") or "").strip()
+                if not name or not content:
+                    continue
+
+                attachment_payload = {
+                    self.settings.lingxing_send_message_attachment_name_field: name,
+                    self.settings.lingxing_send_message_attachment_content_field: content,
+                }
+                if content_type and self.settings.lingxing_send_message_attachment_content_type_field:
+                    attachment_payload[self.settings.lingxing_send_message_attachment_content_type_field] = content_type
+                normalized_attachments.append(attachment_payload)
+
+            if normalized_attachments:
+                payload[self.settings.lingxing_send_message_attachments_field] = normalized_attachments
 
         path = self.settings.lingxing_send_message_path
         if "{conversation_id}" in path:

@@ -512,6 +512,11 @@ def send_message(
     )
 
     if payload.async_mode:
+        if payload.attachments:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Attachments are only supported in sync send mode",
+            )
         task = send_approved_reply_task.delay(
             tenant_id=current_user.tenant_id,
             store_id=internal_store_id,
@@ -527,6 +532,7 @@ def send_message(
             message_id=message_id,
             tenant_id=current_user.tenant_id,
             store_id=internal_store_id,
+            attachments=[item.model_dump() for item in payload.attachments],
             send_service=MessageSendService(
                 client=client,
                 store_name=target_store.store_name,
@@ -551,11 +557,13 @@ def send_message(
 def approve_and_send_message(
     external_store_id: str,
     message_id: int,
+    payload: SendReplyRequest | None = None,
     current_user: User = RoleDependency,
     db: Session = Depends(get_db_session),
 ):
     """Convenience endpoint: approve AI reply then send through Lingxing API."""
 
+    payload = payload or SendReplyRequest(async_mode=False)
     _ = approve_message(
         external_store_id=external_store_id,
         message_id=message_id,
@@ -565,7 +573,10 @@ def approve_and_send_message(
     return send_message(
         external_store_id=external_store_id,
         message_id=message_id,
-        payload=SendReplyRequest(async_mode=False),
+        payload=SendReplyRequest(
+            async_mode=False,
+            attachments=payload.attachments,
+        ),
         current_user=current_user,
         db=db,
     )

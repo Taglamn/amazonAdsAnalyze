@@ -52,8 +52,16 @@ class ProcessMessageRequest(BaseModel):
     allow_auto_send: bool = True
 
 
+class SendAttachmentIn(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    content_base64: str = Field(min_length=1)
+    content_type: str | None = Field(default=None, max_length=128)
+    size: int | None = Field(default=None, ge=0)
+
+
 class SendReplyRequest(BaseModel):
     async_mode: bool = True
+    attachments: list[SendAttachmentIn] = Field(default_factory=list, max_length=10)
 
 
 class EditReplyRequest(BaseModel):

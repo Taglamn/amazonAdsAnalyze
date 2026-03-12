@@ -307,6 +307,7 @@ def send_approved_reply(
     tenant_id: int,
     store_id: int,
     send_service: MessageSendService,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> tuple[BuyerMessage, dict[str, Any]]:
     """Send approved scoped reply to Lingxing API and mark as sent."""
 
@@ -319,7 +320,11 @@ def send_approved_reply(
     if not final_reply:
         raise MessageStateError("Message has no reply to send")
 
-    sp_result = send_service.send(conversation_id=message.conversation_id, reply=final_reply)
+    sp_result = send_service.send(
+        conversation_id=message.conversation_id,
+        reply=final_reply,
+        attachments=attachments,
+    )
 
     message.status = MessageStatus.SENT.value
     message.sent_at = datetime.now(timezone.utc)

@@ -11,10 +11,16 @@ class MessageSendService:
         self.store_name = store_name
         self.sid = sid
 
-    def send(self, conversation_id: str, reply: str) -> dict[str, Any]:
+    def send(
+        self,
+        conversation_id: str,
+        reply: str,
+        attachments: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         return self.client.send_reply(
             conversation_id=conversation_id,
             reply=reply,
             store_name=self.store_name,
             sid=self.sid,
+            attachments=attachments,
         )

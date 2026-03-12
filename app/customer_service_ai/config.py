@@ -46,6 +46,10 @@ class CustomerServiceSettings:
     lingxing_send_message_sid_field: str
     lingxing_send_message_conversation_field: str
     lingxing_send_message_reply_field: str
+    lingxing_send_message_attachments_field: str
+    lingxing_send_message_attachment_name_field: str
+    lingxing_send_message_attachment_content_field: str
+    lingxing_send_message_attachment_content_type_field: str
     max_reply_chars: int
 
 
@@ -209,6 +213,22 @@ def get_customer_service_settings() -> CustomerServiceSettings:
         lingxing_send_message_reply_field=os.getenv(
             "CUSTOMER_SERVICE_LINGXING_SEND_MESSAGE_REPLY_FIELD",
             "reply",
+        ).strip(),
+        lingxing_send_message_attachments_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_SEND_MESSAGE_ATTACHMENTS_FIELD",
+            "attachments",
+        ).strip(),
+        lingxing_send_message_attachment_name_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_SEND_MESSAGE_ATTACHMENT_NAME_FIELD",
+            "name",
+        ).strip(),
+        lingxing_send_message_attachment_content_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_SEND_MESSAGE_ATTACHMENT_CONTENT_FIELD",
+            "content",
+        ).strip(),
+        lingxing_send_message_attachment_content_type_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_SEND_MESSAGE_ATTACHMENT_CONTENT_TYPE_FIELD",
+            "content_type",
         ).strip(),
         max_reply_chars=max_reply_chars,
     )
