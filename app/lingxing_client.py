@@ -297,13 +297,22 @@ class LingxingClient:
                 return resp
 
             message = str(resp.get("message") or resp.get("msg") or "")
+            error_details_raw = resp.get("error_details")
+            if isinstance(error_details_raw, list):
+                error_details = [str(item) for item in error_details_raw if str(item).strip()]
+            else:
+                error_details = []
+            request_id = str(resp.get("request_id") or "").strip()
             if not retried_with_new_token and self._is_token_expired_error(code, message):
                 self.generate_access_token()
                 retried_with_new_token = True
                 continue
 
             raise LingxingApiError(
-                f"Lingxing business error. path={path} code={code} message={message}"
+                "Lingxing business error. "
+                f"path={path} code={code} message={message} "
+                f"request_id={request_id or '-'} "
+                f"error_details={error_details}"
             )
 
     def _post_paginated(
