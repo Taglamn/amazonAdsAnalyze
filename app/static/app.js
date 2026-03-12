@@ -36,6 +36,10 @@ const I18N = {
       tip: 'Use Customer Service APIs: fetch -> process -> review -> send.',
       fetchBtn: 'Fetch Messages',
       reloadBtn: 'Reload',
+      expandBtn: 'Expand',
+      collapseBtn: 'Collapse',
+      detailLabel: 'Mail Detail',
+      detailLoading: 'Loading detail...',
       processBtn: 'Generate Reply',
       saveBtn: 'Save Edit',
       approveBtn: 'Approve',
@@ -208,6 +212,10 @@ const I18N = {
       tip: '使用客服 API 流程：拉取消息 -> AI 处理 -> 人工审核 -> 发送。',
       fetchBtn: '拉取邮件',
       reloadBtn: '刷新列表',
+      expandBtn: '展开详情',
+      collapseBtn: '收起详情',
+      detailLabel: '邮件正文',
+      detailLoading: '正在加载详情...',
       processBtn: '生成回复',
       saveBtn: '保存编辑',
       approveBtn: '审核通过',
@@ -907,6 +915,9 @@ function App() {
   const [mailLoading, setMailLoading] = useState(false);
   const [mailNotice, setMailNotice] = useState('');
   const [replyDrafts, setReplyDrafts] = useState({});
+  const [mailDetailMap, setMailDetailMap] = useState({});
+  const [mailDetailOpenMap, setMailDetailOpenMap] = useState({});
+  const [mailDetailLoadingMap, setMailDetailLoadingMap] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const syncPollNonceRef = useRef(0);
@@ -1295,6 +1306,9 @@ function App() {
           items.map((item) => [item.id, item.final_reply || item.ai_reply || '']),
         ),
       );
+      setMailDetailMap({});
+      setMailDetailOpenMap({});
+      setMailDetailLoadingMap({});
       setMailNotice(`${t.autoReply.loadedCount}: ${items.length}`);
     } catch (err) {
       setError(err.message);
@@ -1422,6 +1436,37 @@ function App() {
     } catch (err) {
       setError(err.message);
       setMailLoading(false);
+    }
+  };
+
+  const onToggleMessageDetail = async (row) => {
+    const messageId = row.id;
+    if (!selectedStore) return;
+    const opened = Boolean(mailDetailOpenMap[messageId]);
+    if (opened) {
+      setMailDetailOpenMap((prev) => ({ ...prev, [messageId]: false }));
+      return;
+    }
+
+    if (mailDetailMap[messageId]) {
+      setMailDetailOpenMap((prev) => ({ ...prev, [messageId]: true }));
+      return;
+    }
+
+    setMailDetailLoadingMap((prev) => ({ ...prev, [messageId]: true }));
+    setError('');
+    try {
+      const detail = await fetchJson(
+        `/api/customer-service/stores/${encodeURIComponent(selectedStore)}/messages/${messageId}/detail`,
+        undefined,
+        t.requestFailed,
+      );
+      setMailDetailMap((prev) => ({ ...prev, [messageId]: detail }));
+      setMailDetailOpenMap((prev) => ({ ...prev, [messageId]: true }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setMailDetailLoadingMap((prev) => ({ ...prev, [messageId]: false }));
     }
   };
 
@@ -2362,65 +2407,107 @@ function App() {
                     </thead>
                     <tbody className="divide-y divide-brand-50">
                       ${mailRows.length
-                        ? mailRows.map(
-                            (row) => html`
-                              <tr key=${row.id} className="align-top hover:bg-brand-50/70">
-                                <td className="px-3 py-3">
-                                  <div className="whitespace-pre-wrap break-words text-brand-900">${row.buyer_message || '-'}</div>
-                                </td>
-                                <td className="px-3 py-3">
-                                  <div className="whitespace-pre-wrap break-words text-brand-700">${row.ai_reply || '-'}</div>
-                                </td>
-                                <td className="px-3 py-3">
-                                  <textarea
-                                    value=${replyDrafts[row.id] || ''}
-                                    onChange=${(e) =>
-                                      setReplyDrafts((prev) => ({ ...prev, [row.id]: e.target.value }))}
-                                    rows="3"
-                                    className="w-full rounded-md border border-brand-200 bg-white px-2 py-1 text-sm"
-                                  />
-                                </td>
-                                <td className="px-3 py-3">
-                                  <span className="rounded-full border border-brand-200 bg-brand-50 px-2 py-1 text-xs font-semibold text-brand-700">
-                                    ${row.status || '-'}
-                                  </span>
-                                </td>
-                                <td className="px-3 py-3 text-brand-600">${formatDateTime(row.created_at)}</td>
-                                <td className="px-3 py-3">
-                                  <div className="flex flex-wrap gap-2">
-                                    <button
-                                      onClick=${() => onProcessMessage(row.id)}
-                                      disabled=${Boolean(mailLoading)}
-                                      className="rounded-md border border-brand-300 bg-white px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50"
-                                    >
-                                      ${t.autoReply.processBtn}
-                                    </button>
-                                    <button
-                                      onClick=${() => onSaveReply(row.id)}
-                                      disabled=${Boolean(mailLoading) || !String(replyDrafts[row.id] || '').trim()}
-                                      className="rounded-md border border-brand-300 bg-white px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50 disabled:cursor-not-allowed disabled:border-brand-100 disabled:bg-brand-50 disabled:text-brand-300"
-                                    >
-                                      ${t.autoReply.saveBtn}
-                                    </button>
-                                    <button
-                                      onClick=${() => onApproveMessage(row.id)}
-                                      disabled=${Boolean(mailLoading)}
-                                      className="rounded-md border border-brand-300 bg-white px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50"
-                                    >
-                                      ${t.autoReply.approveBtn}
-                                    </button>
-                                    <button
-                                      onClick=${() => onSendMessage(row.id)}
-                                      disabled=${Boolean(mailLoading) || row.status !== 'approved'}
-                                      className="rounded-md bg-brand-700 px-2 py-1 text-xs font-semibold text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-brand-200"
-                                    >
-                                      ${t.autoReply.sendBtn}
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            `,
-                          )
+                        ? mailRows.flatMap((row) => {
+                            const detailOpened = Boolean(mailDetailOpenMap[row.id]);
+                            const detailLoading = Boolean(mailDetailLoadingMap[row.id]);
+                            const detail = mailDetailMap[row.id] || null;
+                            const detailText = detail?.text_plain || detail?.text_html || '';
+                            const attachmentNames = Array.isArray(detail?.attachments)
+                              ? detail.attachments
+                                  .map((item) => String(item?.name || '').trim())
+                                  .filter(Boolean)
+                                  .join(', ')
+                              : '';
+
+                            return [
+                              html`
+                                <tr key=${`row_${row.id}`} className="align-top hover:bg-brand-50/70">
+                                  <td className="px-3 py-3">
+                                    <div className="whitespace-pre-wrap break-words text-brand-900">${row.buyer_message || '-'}</div>
+                                  </td>
+                                  <td className="px-3 py-3">
+                                    <div className="whitespace-pre-wrap break-words text-brand-700">${row.ai_reply || '-'}</div>
+                                  </td>
+                                  <td className="px-3 py-3">
+                                    <textarea
+                                      value=${replyDrafts[row.id] || ''}
+                                      onChange=${(e) =>
+                                        setReplyDrafts((prev) => ({ ...prev, [row.id]: e.target.value }))}
+                                      rows="3"
+                                      className="w-full rounded-md border border-brand-200 bg-white px-2 py-1 text-sm"
+                                    />
+                                  </td>
+                                  <td className="px-3 py-3">
+                                    <span className="rounded-full border border-brand-200 bg-brand-50 px-2 py-1 text-xs font-semibold text-brand-700">
+                                      ${row.status || '-'}
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-3 text-brand-600">${formatDateTime(row.created_at)}</td>
+                                  <td className="px-3 py-3">
+                                    <div className="flex flex-wrap gap-2">
+                                      <button
+                                        onClick=${() => onToggleMessageDetail(row)}
+                                        disabled=${Boolean(detailLoading)}
+                                        className="rounded-md border border-brand-300 bg-white px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50"
+                                      >
+                                        ${detailOpened ? t.autoReply.collapseBtn : t.autoReply.expandBtn}
+                                      </button>
+                                      <button
+                                        onClick=${() => onProcessMessage(row.id)}
+                                        disabled=${Boolean(mailLoading)}
+                                        className="rounded-md border border-brand-300 bg-white px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50"
+                                      >
+                                        ${t.autoReply.processBtn}
+                                      </button>
+                                      <button
+                                        onClick=${() => onSaveReply(row.id)}
+                                        disabled=${Boolean(mailLoading) || !String(replyDrafts[row.id] || '').trim()}
+                                        className="rounded-md border border-brand-300 bg-white px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50 disabled:cursor-not-allowed disabled:border-brand-100 disabled:bg-brand-50 disabled:text-brand-300"
+                                      >
+                                        ${t.autoReply.saveBtn}
+                                      </button>
+                                      <button
+                                        onClick=${() => onApproveMessage(row.id)}
+                                        disabled=${Boolean(mailLoading)}
+                                        className="rounded-md border border-brand-300 bg-white px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50"
+                                      >
+                                        ${t.autoReply.approveBtn}
+                                      </button>
+                                      <button
+                                        onClick=${() => onSendMessage(row.id)}
+                                        disabled=${Boolean(mailLoading) || row.status !== 'approved'}
+                                        className="rounded-md bg-brand-700 px-2 py-1 text-xs font-semibold text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-brand-200"
+                                      >
+                                        ${t.autoReply.sendBtn}
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              `,
+                              detailOpened
+                                ? html`
+                                    <tr key=${`detail_${row.id}`} className="bg-brand-50/40">
+                                      <td colSpan="6" className="px-3 py-3">
+                                        <p className="mb-2 text-xs font-semibold text-brand-700">${t.autoReply.detailLabel}</p>
+                                        ${detailLoading
+                                          ? html`<p className="text-sm text-brand-600">${t.autoReply.detailLoading}</p>`
+                                          : html`
+                                              <div className="space-y-2 text-sm text-brand-800">
+                                                <p><strong>Subject:</strong> ${detail?.subject || '-'}</p>
+                                                <p><strong>From:</strong> ${detail?.from_address || '-'}</p>
+                                                <p><strong>Date:</strong> ${detail?.date || '-'}</p>
+                                                <p><strong>Attachments:</strong> ${attachmentNames || '-'}</p>
+                                                <pre className="whitespace-pre-wrap break-words rounded-md bg-white p-3 text-xs leading-6 text-brand-800">
+${detailText || '-'}
+                                                </pre>
+                                              </div>
+                                            `}
+                                      </td>
+                                    </tr>
+                                  `
+                                : null,
+                            ];
+                          })
                         : html`
                             <tr>
                               <td colSpan="6" className="px-3 py-5 text-center text-sm text-brand-600">

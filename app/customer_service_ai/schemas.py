@@ -87,3 +87,19 @@ class SendOperationResponse(BaseModel):
     message_id: int
     status: MessageStatus
     sp_api_result: dict[str, Any]
+
+
+class MailDetailResponse(BaseModel):
+    message_id: int
+    conversation_id: str
+    subject: str | None = None
+    text_html: str | None = None
+    text_plain: str | None = None
+    from_name: str | None = None
+    from_address: str | None = None
+    to_address_all: str | None = None
+    cc: str | None = None
+    bcc: str | None = None
+    date: str | None = None
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
+    raw_data: dict[str, Any] = Field(default_factory=dict)

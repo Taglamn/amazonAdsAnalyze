@@ -23,6 +23,7 @@ from .schemas import (
     EditReplyRequest,
     FetchMessagesRequest,
     InlineFetchResponse,
+    MailDetailResponse,
     MessageOperationResponse,
     PipelineResultOut,
     ProcessMessageRequest,
@@ -37,6 +38,7 @@ from .service import (
     ProcessResult,
     approve_reply,
     fetch_and_store_messages,
+    get_message,
     list_messages,
     process_message_pipeline,
     send_approved_reply,
@@ -232,6 +234,62 @@ def get_messages(
         limit=limit,
     )
     return BuyerMessageListResponse(items=items)
+
+
+@router.get("/stores/{external_store_id}/messages/{message_id}/detail", response_model=MailDetailResponse)
+def get_message_detail(
+    external_store_id: str,
+    message_id: int,
+    current_user: User = RoleDependency,
+    db: Session = Depends(get_db_session),
+):
+    """Fetch Lingxing mail detail for one scoped message (expand on demand)."""
+
+    internal_store_id = _resolve_scoped_store(
+        db,
+        current_user=current_user,
+        external_store_id=external_store_id,
+    )
+
+    try:
+        message = get_message(
+            db,
+            message_id=message_id,
+            tenant_id=current_user.tenant_id,
+            store_id=internal_store_id,
+        )
+        client = _build_message_client()
+        target_store = client.resolve_store(external_store_id=external_store_id)
+        detail = client.fetch_message_detail(
+            webmail_uuid=message.conversation_id,
+            store_name=target_store.store_name,
+            sid=target_store.sid,
+            email=target_store.email,
+            external_store_id=target_store.external_store_id,
+        )
+    except MessagingAPIError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except MessageNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    attachments = detail.get("attachments")
+    if not isinstance(attachments, list):
+        attachments = []
+    return MailDetailResponse(
+        message_id=message.id,
+        conversation_id=message.conversation_id,
+        subject=str(detail.get("subject") or "") or None,
+        text_html=str(detail.get("text_html") or "") or None,
+        text_plain=str(detail.get("text_plain") or "") or None,
+        from_name=str(detail.get("from_name") or "") or None,
+        from_address=str(detail.get("from_address") or "") or None,
+        to_address_all=str(detail.get("to_address_all") or "") or None,
+        cc=str(detail.get("cc") or "") or None,
+        bcc=str(detail.get("bcc") or "") or None,
+        date=str(detail.get("date") or "") or None,
+        attachments=[item for item in attachments if isinstance(item, dict)],
+        raw_data=detail,
+    )
 
 
 @router.post("/stores/{external_store_id}/messages/{message_id}/process", response_model=TaskQueuedResponse | MessageOperationResponse)

@@ -111,22 +111,12 @@ class LingxingMessagingClient:
         """Fetch buyer messages for one Lingxing store."""
 
         payload: dict[str, Any] = {}
-        email_map = self.settings.lingxing_list_messages_email_map
-        target_email = ""
-        email_candidates = [
-            email_map.get((external_store_id or "").strip(), ""),
-            email_map.get((store_name or "").strip(), ""),
-            (email_map.get(str(sid), "") if sid is not None else ""),
-            self.settings.lingxing_list_messages_email_value,
-            email,
-        ]
-        for candidate in email_candidates:
-            candidate_text = str(candidate or "").strip()
-            if not candidate_text:
-                continue
-            if self._looks_like_email(candidate_text):
-                target_email = candidate_text
-                break
+        target_email = self._resolve_target_email(
+            email=email,
+            external_store_id=external_store_id,
+            store_name=store_name,
+            sid=sid,
+        )
 
         if self.settings.lingxing_list_messages_email_field and not target_email:
             raise MessagingAPIError(
@@ -168,6 +158,50 @@ class LingxingMessagingClient:
             body=body,
         )
         return self._extract_messages(resp)
+
+    def fetch_message_detail(
+        self,
+        *,
+        webmail_uuid: str,
+        store_name: str,
+        sid: int | None = None,
+        email: str = "",
+        external_store_id: str = "",
+    ) -> dict[str, Any]:
+        """Fetch one mail detail by webmail_uuid."""
+
+        payload: dict[str, Any] = {}
+        if self.settings.lingxing_mail_detail_uuid_field:
+            payload[self.settings.lingxing_mail_detail_uuid_field] = webmail_uuid
+
+        target_email = self._resolve_target_email(
+            email=email,
+            external_store_id=external_store_id,
+            store_name=store_name,
+            sid=sid,
+        )
+        if self.settings.lingxing_mail_detail_email_field and target_email:
+            payload[self.settings.lingxing_mail_detail_email_field] = target_email
+        if self.settings.lingxing_mail_detail_store_name_field:
+            payload[self.settings.lingxing_mail_detail_store_name_field] = store_name
+        if sid is not None and self.settings.lingxing_mail_detail_sid_field:
+            payload[self.settings.lingxing_mail_detail_sid_field] = sid
+
+        method = self.settings.lingxing_mail_detail_method or "POST"
+        method = method.upper()
+        query = payload if method == "GET" else None
+        body = None if method == "GET" else payload
+
+        resp = self._call_openapi_with_fallback(
+            path=self.settings.lingxing_mail_detail_path,
+            method=method,
+            query=query,
+            body=body,
+        )
+        data = resp.get("data")
+        if isinstance(data, dict):
+            return data
+        return {}
 
     def send_reply(
         self,
@@ -354,6 +388,28 @@ class LingxingMessagingClient:
     @staticmethod
     def _looks_like_email(value: str) -> bool:
         return bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value or ""))
+
+    def _resolve_target_email(
+        self,
+        *,
+        email: str,
+        external_store_id: str,
+        store_name: str,
+        sid: int | None,
+    ) -> str:
+        email_map = self.settings.lingxing_list_messages_email_map
+        email_candidates = [
+            email_map.get((external_store_id or "").strip(), ""),
+            email_map.get((store_name or "").strip(), ""),
+            (email_map.get(str(sid), "") if sid is not None else ""),
+            self.settings.lingxing_list_messages_email_value,
+            email,
+        ]
+        for candidate in email_candidates:
+            candidate_text = str(candidate or "").strip()
+            if candidate_text and self._looks_like_email(candidate_text):
+                return candidate_text
+        return ""
 
     def _extract_messages(self, payload: dict[str, Any]) -> list[IncomingBuyerMessage]:
         seen: set[tuple[str, str]] = set()

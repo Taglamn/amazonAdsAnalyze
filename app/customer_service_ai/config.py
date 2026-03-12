@@ -34,6 +34,12 @@ class CustomerServiceSettings:
     lingxing_list_messages_length_value: int
     lingxing_list_messages_store_name_field: str
     lingxing_list_messages_sid_field: str
+    lingxing_mail_detail_path: str
+    lingxing_mail_detail_method: str
+    lingxing_mail_detail_uuid_field: str
+    lingxing_mail_detail_email_field: str
+    lingxing_mail_detail_store_name_field: str
+    lingxing_mail_detail_sid_field: str
     lingxing_send_message_path: str
     lingxing_send_message_method: str
     lingxing_send_message_store_name_field: str
@@ -154,6 +160,30 @@ def get_customer_service_settings() -> CustomerServiceSettings:
         ).strip(),
         lingxing_list_messages_sid_field=os.getenv(
             "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_SID_FIELD",
+            "",
+        ).strip(),
+        lingxing_mail_detail_path=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_MAIL_DETAIL_PATH",
+            "/erp/sc/data/mail/detail",
+        ).strip(),
+        lingxing_mail_detail_method=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_MAIL_DETAIL_METHOD",
+            "POST",
+        ).strip().upper(),
+        lingxing_mail_detail_uuid_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_MAIL_DETAIL_UUID_FIELD",
+            "webmail_uuid",
+        ).strip(),
+        lingxing_mail_detail_email_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_MAIL_DETAIL_EMAIL_FIELD",
+            "email",
+        ).strip(),
+        lingxing_mail_detail_store_name_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_MAIL_DETAIL_STORE_NAME_FIELD",
+            "",
+        ).strip(),
+        lingxing_mail_detail_sid_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_MAIL_DETAIL_SID_FIELD",
             "",
         ).strip(),
         lingxing_send_message_path=os.getenv(
