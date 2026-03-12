@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
@@ -50,6 +52,7 @@ from .sp_api import LingxingBoundStore, LingxingMessagingClient, MessagingAPIErr
 from .tasks import fetch_buyer_messages_task, process_message_task, send_approved_reply_task
 
 router = APIRouter(prefix="/api/customer-service", tags=["customer-service"])
+logger = logging.getLogger(__name__)
 
 
 RoleDependency = Depends(require_roles(RoleName.ADMIN, RoleName.MANAGER, RoleName.STAFF))
@@ -228,6 +231,12 @@ def fetch_messages(
         )
     except (MessagingAPIError, LLMGenerationError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("customer_service_fetch_messages_unexpected_error store=%s", external_store_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error while fetching/processing messages: {exc}",
+        ) from exc
 
 
 @router.get("/stores/{external_store_id}/messages", response_model=BuyerMessageListResponse)
@@ -390,6 +399,16 @@ def process_message(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except MessageStateError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "customer_service_process_message_unexpected_error store=%s message_id=%s",
+            external_store_id,
+            message_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error while generating reply: {exc}",
+        ) from exc
 
     return _process_to_response(result)
 
@@ -442,7 +461,7 @@ def edit_reply(
     except MessageStateError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
-    return MessageOperationResponse(message_id=message.id, status=MessageStatus(message.status))
+    return MessageOperationResponse(message_id=message.id, status=_safe_message_status(message.status))
 
 
 @router.post("/stores/{external_store_id}/messages/{message_id}/approve", response_model=MessageOperationResponse)
@@ -473,7 +492,7 @@ def approve_message(
     except MessageStateError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
-    return MessageOperationResponse(message_id=message.id, status=MessageStatus(message.status))
+    return MessageOperationResponse(message_id=message.id, status=_safe_message_status(message.status))
 
 
 @router.post("/stores/{external_store_id}/messages/{message_id}/send", response_model=TaskQueuedResponse | SendOperationResponse)
@@ -523,7 +542,7 @@ def send_message(
 
     return SendOperationResponse(
         message_id=message.id,
-        status=MessageStatus(message.status),
+        status=_safe_message_status(message.status),
         sp_api_result=sp_result,
     )
 
@@ -557,7 +576,7 @@ def _process_to_response(result: ProcessResult) -> MessageOperationResponse:
 
     return MessageOperationResponse(
         message_id=result.message.id,
-        status=MessageStatus(result.message.status),
+        status=_safe_message_status(result.message.status),
         pipeline=PipelineResultOut(
             category=result.pipeline.category,
             sentiment=result.pipeline.sentiment,
@@ -568,3 +587,12 @@ def _process_to_response(result: ProcessResult) -> MessageOperationResponse:
         auto_sent=result.auto_sent,
         sp_api_result=result.sp_api_result,
     )
+
+
+def _safe_message_status(raw_status: str) -> MessageStatus:
+    """Map unknown status strings to a safe enum to avoid 500 response serialization errors."""
+
+    try:
+        return MessageStatus(raw_status)
+    except ValueError:
+        return MessageStatus.WAITING_REVIEW
