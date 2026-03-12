@@ -19,7 +19,8 @@ class ProductIssueResult:
 
 class RiskDetectionService:
     def detect(self, llm: CustomerServiceLLM, buyer_message: str) -> RiskResult:
-        payload = llm.generate_json(RISK_DETECTION_PROMPT.format(buyer_message=buyer_message))
+        prompt = RISK_DETECTION_PROMPT.replace("{buyer_message}", buyer_message)
+        payload = llm.generate_json(prompt)
         raw_risk = str(payload.get("risk_level") or "").strip().lower()
         risk_level = raw_risk if raw_risk in RISK_OPTIONS else "medium"
         reason = str(payload.get("reason") or "").strip()
@@ -28,6 +29,7 @@ class RiskDetectionService:
 
 class ProductIssueExtractionService:
     def extract(self, llm: CustomerServiceLLM, buyer_message: str) -> ProductIssueResult:
-        payload = llm.generate_json(PRODUCT_ISSUE_PROMPT.format(buyer_message=buyer_message))
+        prompt = PRODUCT_ISSUE_PROMPT.replace("{buyer_message}", buyer_message)
+        payload = llm.generate_json(prompt)
         issue = str(payload.get("product_issue") or "").strip()
         return ProductIssueResult(product_issue=issue)

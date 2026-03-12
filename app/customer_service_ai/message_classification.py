@@ -14,7 +14,8 @@ class ClassificationResult:
 
 class MessageClassificationService:
     def classify(self, llm: CustomerServiceLLM, buyer_message: str) -> ClassificationResult:
-        payload = llm.generate_json(CLASSIFICATION_PROMPT.format(buyer_message=buyer_message))
+        prompt = CLASSIFICATION_PROMPT.replace("{buyer_message}", buyer_message)
+        payload = llm.generate_json(prompt)
         raw_category = str(payload.get("category") or "").strip().lower()
         category = raw_category if raw_category in CATEGORY_OPTIONS else "other"
         confidence = str(payload.get("confidence") or "0").strip() or "0"
