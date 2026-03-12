@@ -20,6 +20,16 @@ class CustomerServiceSettings:
     gemini_api_key: str
     lingxing_list_messages_path: str
     lingxing_list_messages_method: str
+    lingxing_list_messages_flag_field: str
+    lingxing_list_messages_flag_value: str
+    lingxing_list_messages_email_field: str
+    lingxing_list_messages_email_value: str
+    lingxing_list_messages_start_date_field: str
+    lingxing_list_messages_end_date_field: str
+    lingxing_list_messages_default_days: int
+    lingxing_list_messages_offset_field: str
+    lingxing_list_messages_length_field: str
+    lingxing_list_messages_length_value: int
     lingxing_list_messages_store_name_field: str
     lingxing_list_messages_sid_field: str
     lingxing_send_message_path: str
@@ -46,6 +56,17 @@ def get_customer_service_settings() -> CustomerServiceSettings:
     except ValueError:
         max_reply_chars = 1200
 
+    list_days_raw = os.getenv("CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_DEFAULT_DAYS", "30").strip()
+    list_len_raw = os.getenv("CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_LENGTH_VALUE", "20").strip()
+    try:
+        list_days = max(0, int(list_days_raw))
+    except ValueError:
+        list_days = 30
+    try:
+        list_len = max(1, int(list_len_raw))
+    except ValueError:
+        list_len = 20
+
     return CustomerServiceSettings(
         database_url=(
             os.getenv("CUSTOMER_SERVICE_DATABASE_URL", "").strip()
@@ -68,13 +89,47 @@ def get_customer_service_settings() -> CustomerServiceSettings:
             "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_METHOD",
             "POST",
         ).strip().upper(),
+        lingxing_list_messages_flag_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_FLAG_FIELD",
+            "flag",
+        ).strip(),
+        lingxing_list_messages_flag_value=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_FLAG_VALUE",
+            "receive",
+        ).strip(),
+        lingxing_list_messages_email_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_EMAIL_FIELD",
+            "email",
+        ).strip(),
+        lingxing_list_messages_email_value=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_EMAIL_VALUE",
+            "",
+        ).strip(),
+        lingxing_list_messages_start_date_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_START_DATE_FIELD",
+            "start_date",
+        ).strip(),
+        lingxing_list_messages_end_date_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_END_DATE_FIELD",
+            "end_date",
+        ).strip(),
+        lingxing_list_messages_default_days=list_days,
+        lingxing_list_messages_offset_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_OFFSET_FIELD",
+            "offset",
+        ).strip(),
+        lingxing_list_messages_length_field=os.getenv(
+            "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_LENGTH_FIELD",
+            "length",
+        ).strip(),
+        lingxing_list_messages_length_value=list_len,
         lingxing_list_messages_store_name_field=os.getenv(
             "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_STORE_NAME_FIELD",
-            "seller_name",
+            "",
         ).strip(),
         lingxing_list_messages_sid_field=os.getenv(
             "CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_SID_FIELD",
-            "sid",
+            "",
         ).strip(),
         lingxing_send_message_path=os.getenv(
             "CUSTOMER_SERVICE_LINGXING_SEND_MESSAGE_PATH",

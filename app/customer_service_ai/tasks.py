@@ -40,6 +40,7 @@ def fetch_buyer_messages_task(
             client=client,
             store_name=target_store.store_name,
             sid=target_store.sid,
+            email=target_store.email,
         )
         storage_service = MessageStorageService()
         result = fetch_and_store_messages(

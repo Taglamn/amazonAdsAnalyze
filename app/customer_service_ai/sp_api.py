@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +25,7 @@ class LingxingBoundStore:
     sid: int
     external_store_id: str
     store_name: str
+    email: str = ""
 
 
 class LingxingMessagingClient:
@@ -59,11 +61,13 @@ class LingxingMessagingClient:
                 continue
 
             store_name = str(item.get("name") or "").strip() or f"lingxing_{sid}"
+            store_email = self._extract_store_email(item)
             stores.append(
                 LingxingBoundStore(
                     sid=sid,
                     external_store_id=f"lingxing_{sid}",
                     store_name=store_name,
+                    email=store_email,
                 )
             )
         stores.sort(key=lambda x: x.store_name.lower())
@@ -95,10 +99,33 @@ class LingxingMessagingClient:
 
         raise MessagingAPIError("Missing store selector")
 
-    def fetch_buyer_messages(self, *, store_name: str, sid: int | None = None) -> list[IncomingBuyerMessage]:
+    def fetch_buyer_messages(
+        self,
+        *,
+        store_name: str,
+        sid: int | None = None,
+        email: str = "",
+    ) -> list[IncomingBuyerMessage]:
         """Fetch buyer messages for one Lingxing store."""
 
         payload: dict[str, Any] = {}
+        target_email = (email or self.settings.lingxing_list_messages_email_value).strip()
+        if self.settings.lingxing_list_messages_flag_field:
+            payload[self.settings.lingxing_list_messages_flag_field] = self.settings.lingxing_list_messages_flag_value
+        if self.settings.lingxing_list_messages_email_field and target_email:
+            payload[self.settings.lingxing_list_messages_email_field] = target_email
+
+        if self.settings.lingxing_list_messages_start_date_field:
+            end_date = date.today()
+            start_date = end_date - timedelta(days=max(0, self.settings.lingxing_list_messages_default_days))
+            payload[self.settings.lingxing_list_messages_start_date_field] = start_date.isoformat()
+        if self.settings.lingxing_list_messages_end_date_field:
+            payload[self.settings.lingxing_list_messages_end_date_field] = date.today().isoformat()
+        if self.settings.lingxing_list_messages_offset_field:
+            payload[self.settings.lingxing_list_messages_offset_field] = 0
+        if self.settings.lingxing_list_messages_length_field:
+            payload[self.settings.lingxing_list_messages_length_field] = self.settings.lingxing_list_messages_length_value
+
         if self.settings.lingxing_list_messages_store_name_field:
             payload[self.settings.lingxing_list_messages_store_name_field] = store_name
         if sid is not None and self.settings.lingxing_list_messages_sid_field:
@@ -279,6 +306,26 @@ class LingxingMessagingClient:
             ordered.append(item)
         return ordered
 
+    @staticmethod
+    def _extract_store_email(payload: dict[str, Any]) -> str:
+        for key in (
+            "email",
+            "mail",
+            "store_email",
+            "seller_email",
+            "bind_email",
+            "bind_mail",
+            "webmail",
+            "webmail_account",
+        ):
+            raw = payload.get(key)
+            if raw is None:
+                continue
+            text = str(raw).strip()
+            if text:
+                return text
+        return ""
+
     def _extract_messages(self, payload: dict[str, Any]) -> list[IncomingBuyerMessage]:
         seen: set[tuple[str, str]] = set()
         normalized: list[IncomingBuyerMessage] = []
@@ -333,7 +380,17 @@ class LingxingMessagingClient:
 
     @staticmethod
     def _extract_conversation_id(payload: dict[str, Any]) -> str:
-        for key in ("conversation_id", "conversationId", "thread_id", "threadId", "session_id", "sessionId"):
+        for key in (
+            "conversation_id",
+            "conversationId",
+            "thread_id",
+            "threadId",
+            "session_id",
+            "sessionId",
+            "webmail_uuid",
+            "webmailUuid",
+            "uuid",
+        ):
             raw = payload.get(key)
             if raw is None:
                 continue
@@ -344,7 +401,17 @@ class LingxingMessagingClient:
 
     @staticmethod
     def _extract_message_text(payload: dict[str, Any]) -> str:
-        for key in ("buyerMessage", "message", "text", "content", "body", "question", "buyer_message"):
+        for key in (
+            "buyerMessage",
+            "message",
+            "text",
+            "content",
+            "body",
+            "question",
+            "buyer_message",
+            "subject",
+            "snippet",
+        ):
             raw = payload.get(key)
             if raw is None:
                 continue

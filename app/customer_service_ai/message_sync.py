@@ -6,12 +6,23 @@ from .sp_api import IncomingBuyerMessage, LingxingMessagingClient
 class MessageSyncService:
     """Wrapper around Lingxing client for buyer-message synchronization."""
 
-    def __init__(self, client: LingxingMessagingClient, store_name: str, sid: int | None = None) -> None:
+    def __init__(
+        self,
+        client: LingxingMessagingClient,
+        store_name: str,
+        sid: int | None = None,
+        email: str = "",
+    ) -> None:
         self.client = client
         self.store_name = store_name
         self.sid = sid
+        self.email = email
 
     def fetch_messages(self) -> list[IncomingBuyerMessage]:
         """Fetch buyer messages for the scoped store."""
 
-        return self.client.fetch_buyer_messages(store_name=self.store_name, sid=self.sid)
+        return self.client.fetch_buyer_messages(
+            store_name=self.store_name,
+            sid=self.sid,
+            email=self.email,
+        )
