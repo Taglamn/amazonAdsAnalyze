@@ -109,7 +109,7 @@ class LingxingMessagingClient:
         query = payload if method == "GET" else None
         body = None if method == "GET" else payload
 
-        resp = self._call_openapi(
+        resp = self._call_openapi_with_fallback(
             path=self.settings.lingxing_list_messages_path,
             method=method,
             query=query,
@@ -146,7 +146,7 @@ class LingxingMessagingClient:
         query = payload if method == "GET" else None
         body = None if method == "GET" else payload
 
-        return self._call_openapi(path=path, method=method, query=query, body=body)
+        return self._call_openapi_with_fallback(path=path, method=method, query=query, body=body)
 
     def _ensure_access_token(self) -> str:
         if self._access_token:
@@ -176,6 +176,56 @@ class LingxingMessagingClient:
             )
         except LingxingApiError as exc:
             raise MessagingAPIError(str(exc)) from exc
+
+    def _call_openapi_with_fallback(
+        self,
+        *,
+        path: str,
+        method: str,
+        query: dict[str, Any] | None = None,
+        body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Call OpenAPI with conservative path fallbacks for Lingxing endpoint variants."""
+
+        candidates = self._build_path_candidates(path)
+        last_error: MessagingAPIError | None = None
+        for candidate in candidates:
+            try:
+                return self._call_openapi(path=candidate, method=method, query=query, body=body)
+            except MessagingAPIError as exc:
+                last_error = exc
+                lowered = str(exc).lower()
+                # Only try next candidate for "service not found" style errors.
+                if ("服务不存在" not in str(exc)) and ("not_found" not in lowered) and ("404" not in lowered):
+                    raise
+
+        if last_error is not None:
+            raise last_error
+        raise MessagingAPIError("Lingxing API call failed without detailed error")
+
+    @staticmethod
+    def _build_path_candidates(path: str) -> list[str]:
+        """Build possible Lingxing API path variants while preserving explicit config priority."""
+
+        base = (path or "").strip() or "/erp/sc/message/lists"
+        candidates: list[str] = [base]
+
+        if base.endswith("/lists"):
+            candidates.append(base[:-1])  # /lists -> /list
+        if "/message/" in base:
+            candidates.append(base.replace("/message/", "/mail/"))
+        if base.endswith("/reply"):
+            candidates.append(base[:-5] + "send")
+
+        # Deduplicate while preserving order.
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for item in candidates:
+            if item in seen:
+                continue
+            seen.add(item)
+            ordered.append(item)
+        return ordered
 
     def _extract_messages(self, payload: dict[str, Any]) -> list[IncomingBuyerMessage]:
         seen: set[tuple[str, str]] = set()
