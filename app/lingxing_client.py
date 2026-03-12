@@ -84,6 +84,7 @@ class LingxingClient:
     def __init__(self, credentials: LingxingCredentials):
         credentials.validate()
         self.credentials = credentials
+        self._cached_access_token: str = ""
 
     @staticmethod
     def _pkcs5_pad(content: str) -> bytes:
@@ -231,7 +232,18 @@ class LingxingClient:
         token = data.get("access_token")
         if not token:
             raise LingxingApiError(f"access_token missing in response: {resp}")
-        return str(token)
+        token_text = str(token).strip()
+        self._cached_access_token = token_text
+        return token_text
+
+    @staticmethod
+    def _is_token_expired_error(code: int, message: str) -> bool:
+        msg = (message or "").strip().lower()
+        if code in (2001003, 2001004):
+            return True
+        if "access token" in msg and ("expire" in msg or "expired" in msg or "missing" in msg):
+            return True
+        return False
 
     def call_openapi(
         self,
@@ -242,43 +254,57 @@ class LingxingClient:
         body: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        query_params = (query or {}).copy()
-        body_params = body or {}
+        if not self._cached_access_token and access_token:
+            self._cached_access_token = access_token.strip()
 
-        sign_material: Dict[str, Any] = {}
-        sign_material.update(query_params)
-        sign_material.update(body_params)
+        retried_with_new_token = False
+        while True:
+            token_to_use = (self._cached_access_token or access_token or "").strip()
+            if not token_to_use:
+                raise LingxingApiError("Lingxing access token is empty")
 
-        fixed = {
-            "access_token": access_token,
-            "app_key": self.credentials.app_id,
-            "timestamp": str(int(time.time())),
-        }
-        sign_material.update(fixed)
+            query_params = (query or {}).copy()
+            body_params = body or {}
 
-        query_params.update(fixed)
-        query_params["sign"] = self._generate_sign(sign_material)
+            sign_material: Dict[str, Any] = {}
+            sign_material.update(query_params)
+            sign_material.update(body_params)
 
-        req_headers = {"X-API-VERSION": "2"}
-        if headers:
-            req_headers.update(headers)
+            fixed = {
+                "access_token": token_to_use,
+                "app_key": self.credentials.app_id,
+                "timestamp": str(int(time.time())),
+            }
+            sign_material.update(fixed)
 
-        resp = self._request_json(
-            method=method,
-            path=path,
-            query=query_params,
-            body=body,
-            headers=req_headers,
-        )
+            query_params.update(fixed)
+            query_params["sign"] = self._generate_sign(sign_material)
 
-        code = int(resp.get("code", -1))
-        if code != 0:
-            raise LingxingApiError(
-                f"Lingxing business error. path={path} code={code} "
-                f"message={resp.get('message') or resp.get('msg')}"
+            req_headers = {"X-API-VERSION": "2"}
+            if headers:
+                req_headers.update(headers)
+
+            resp = self._request_json(
+                method=method,
+                path=path,
+                query=query_params,
+                body=body,
+                headers=req_headers,
             )
 
-        return resp
+            code = int(resp.get("code", -1))
+            if code == 0:
+                return resp
+
+            message = str(resp.get("message") or resp.get("msg") or "")
+            if not retried_with_new_token and self._is_token_expired_error(code, message):
+                self.generate_access_token()
+                retried_with_new_token = True
+                continue
+
+            raise LingxingApiError(
+                f"Lingxing business error. path={path} code={code} message={message}"
+            )
 
     def _post_paginated(
         self,
@@ -330,6 +356,48 @@ class LingxingClient:
             if len(data) < page_size:
                 break
 
+        return rows
+
+    def _post_paginated_first_success(
+        self,
+        access_token: str,
+        candidate_paths: List[str],
+        body: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        for path in candidate_paths:
+            try:
+                return self._post_paginated(
+                    access_token=access_token,
+                    path=path,
+                    body=body,
+                )
+            except LingxingApiError:
+                continue
+        return []
+
+    def _fetch_day_report_with_candidates(
+        self,
+        access_token: str,
+        sid: int,
+        report_date: str,
+        specs: List[Tuple[str, List[str], Dict[str, Any]]],
+    ) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        for sponsored_type, candidate_paths, extra in specs:
+            payload: Dict[str, Any] = {
+                "sid": sid,
+                "report_date": report_date,
+            }
+            payload.update(extra)
+            data = self._post_paginated_first_success(
+                access_token=access_token,
+                candidate_paths=candidate_paths,
+                body=payload,
+            )
+            for item in data:
+                row = dict(item)
+                row["sponsored_type"] = sponsored_type
+                rows.append(row)
         return rows
 
     def list_sellers(self, access_token: str) -> List[Dict[str, Any]]:
@@ -470,12 +538,11 @@ class LingxingClient:
         ]
 
         for sponsored_type, path in specs:
-            payload = {"sid": sid}
             try:
                 data = self._post_paginated(
                     access_token=access_token,
                     path=path,
-                    body=payload,
+                    body={"sid": sid},
                 )
             except LingxingApiError:
                 continue
@@ -502,3 +569,250 @@ class LingxingClient:
                 mapping[(sponsored_type, campaign_id_int)] = campaign_name
 
         return mapping
+
+    def fetch_query_word_reports_for_day(
+        self,
+        access_token: str,
+        sid: int,
+        report_date: str,
+    ) -> List[Dict[str, Any]]:
+        specs = [
+            ("sp", "/pb/openapi/newad/queryWordReports", {"show_detail": 1}),
+            ("sb", "/pb/openapi/newad/hsaQueryWordReports", {}),
+            ("sd", "/pb/openapi/newad/sdQueryWordReports", {"show_detail": 1}),
+        ]
+
+        rows: List[Dict[str, Any]] = []
+        for sponsored_type, path, extra in specs:
+            payload: Dict[str, Any] = {
+                "sid": sid,
+                "report_date": report_date,
+            }
+            payload.update(extra)
+
+            try:
+                data = self._post_paginated(
+                    access_token=access_token,
+                    path=path,
+                    body=payload,
+                )
+            except LingxingApiError:
+                continue
+
+            for item in data:
+                row = dict(item)
+                row["sponsored_type"] = sponsored_type
+                rows.append(row)
+
+        return rows
+
+    def fetch_campaign_placement_reports_for_day(
+        self,
+        access_token: str,
+        sid: int,
+        report_date: str,
+    ) -> List[Dict[str, Any]]:
+        specs = [
+            ("sp", "/pb/openapi/newad/campaignPlacementReports", {"show_detail": 1}),
+            ("sb", "/pb/openapi/newad/hsaCampaignPlacementReports", {}),
+            ("sd", "/pb/openapi/newad/sdCampaignPlacementReports", {"show_detail": 1}),
+        ]
+
+        rows: List[Dict[str, Any]] = []
+        for sponsored_type, path, extra in specs:
+            payload: Dict[str, Any] = {
+                "sid": sid,
+                "report_date": report_date,
+            }
+            payload.update(extra)
+
+            try:
+                data = self._post_paginated(
+                    access_token=access_token,
+                    path=path,
+                    body=payload,
+                )
+            except LingxingApiError:
+                continue
+
+            for item in data:
+                row = dict(item)
+                row["sponsored_type"] = sponsored_type
+                rows.append(row)
+
+        return rows
+
+    def fetch_targeting_reports_for_day(
+        self,
+        access_token: str,
+        sid: int,
+        report_date: str,
+    ) -> List[Dict[str, Any]]:
+        specs = [
+            (
+                "sp",
+                [
+                    "/pb/openapi/newad/spTargetsReports",
+                    "/pb/openapi/newad/spTargetingReports",
+                    "/pb/openapi/newad/spKeywordReports",
+                    "/pb/openapi/newad/targetsReports",
+                ],
+                {"show_detail": 1},
+            ),
+            (
+                "sb",
+                [
+                    "/pb/openapi/newad/hsaTargetsReports",
+                    "/pb/openapi/newad/hsaTargetingReports",
+                    "/pb/openapi/newad/hsaKeywordReports",
+                ],
+                {},
+            ),
+            (
+                "sd",
+                [
+                    "/pb/openapi/newad/sdTargetsReports",
+                    "/pb/openapi/newad/sdTargetingReports",
+                    "/pb/openapi/newad/sdKeywordReports",
+                ],
+                {"show_detail": 1},
+            ),
+        ]
+        return self._fetch_day_report_with_candidates(
+            access_token=access_token,
+            sid=sid,
+            report_date=report_date,
+            specs=specs,
+        )
+
+    def fetch_negative_targeting_reports_for_day(
+        self,
+        access_token: str,
+        sid: int,
+        report_date: str,
+    ) -> List[Dict[str, Any]]:
+        specs = [
+            (
+                "sp",
+                [
+                    "/pb/openapi/newad/spNegativeTargetsReports",
+                    "/pb/openapi/newad/spNegativeKeywordReports",
+                    "/pb/openapi/newad/negativeTargetsReports",
+                ],
+                {"show_detail": 1},
+            ),
+            (
+                "sb",
+                [
+                    "/pb/openapi/newad/hsaNegativeTargetsReports",
+                    "/pb/openapi/newad/hsaNegativeKeywordReports",
+                ],
+                {},
+            ),
+            (
+                "sd",
+                [
+                    "/pb/openapi/newad/sdNegativeTargetsReports",
+                    "/pb/openapi/newad/sdNegativeKeywordReports",
+                ],
+                {"show_detail": 1},
+            ),
+        ]
+        return self._fetch_day_report_with_candidates(
+            access_token=access_token,
+            sid=sid,
+            report_date=report_date,
+            specs=specs,
+        )
+
+    def fetch_ads_reports_for_day(
+        self,
+        access_token: str,
+        sid: int,
+        report_date: str,
+    ) -> List[Dict[str, Any]]:
+        specs = [
+            (
+                "sp",
+                [
+                    "/pb/openapi/newad/spProductAdsReports",
+                    "/pb/openapi/newad/spAdsReports",
+                ],
+                {"show_detail": 1},
+            ),
+            (
+                "sb",
+                [
+                    "/pb/openapi/newad/hsaAdsReports",
+                    "/pb/openapi/newad/hsaProductAdsReports",
+                ],
+                {},
+            ),
+            (
+                "sd",
+                [
+                    "/pb/openapi/newad/sdProductAdsReports",
+                    "/pb/openapi/newad/sdAdsReports",
+                ],
+                {"show_detail": 1},
+            ),
+        ]
+        return self._fetch_day_report_with_candidates(
+            access_token=access_token,
+            sid=sid,
+            report_date=report_date,
+            specs=specs,
+        )
+
+    def fetch_ad_group_product_links(self, access_token: str, sid: int) -> List[Dict[str, Any]]:
+        specs = [
+            ("sp", "/pb/openapi/newad/spProductAds"),
+            ("sb", "/pb/openapi/newad/sbAdHasProductAds"),
+            ("sd", "/pb/openapi/newad/sdProductAds"),
+        ]
+
+        rows: List[Dict[str, Any]] = []
+        for sponsored_type, path in specs:
+            try:
+                data = self._post_paginated(
+                    access_token=access_token,
+                    path=path,
+                    body={"sid": sid},
+                )
+            except LingxingApiError:
+                continue
+
+            for item in data:
+                row = dict(item)
+                row["sponsored_type"] = sponsored_type
+                rows.append(row)
+
+        return rows
+
+    def fetch_product_listings(
+        self,
+        access_token: str,
+        sid: int,
+        asins: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        candidate_paths = [
+            "/erp/sc/data/product/lists",
+            "/erp/sc/data/local_product/lists",
+            "/erp/sc/data/local_inventory/product/lists",
+        ]
+
+        payload: Dict[str, Any] = {"sid": sid}
+        if asins:
+            payload["asins"] = asins
+
+        for path in candidate_paths:
+            try:
+                return self._post_paginated(
+                    access_token=access_token,
+                    path=path,
+                    body=payload,
+                )
+            except LingxingApiError:
+                continue
+
+        return []

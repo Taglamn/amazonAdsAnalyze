@@ -1,10 +1,16 @@
-import React, { useEffect, useMemo, useState } from 'https://esm.sh/react@18.2.0';
+import React, { useEffect, useMemo, useRef, useState } from 'https://esm.sh/react@18.2.0';
 import { createRoot } from 'https://esm.sh/react-dom@18.2.0/client';
 import htm from 'https://esm.sh/htm@3.1.1';
 
 const html = htm.bind(React.createElement);
 
-const NAV_KEYS = ['dashboard', 'playbook', 'adGroups', 'history'];
+const ADS_NAV_KEYS = ['dashboard', 'playbook', 'adGroups', 'history'];
+const AUTO_REPLY_NAV_KEYS = ['autoReplyMail'];
+const SETTINGS_NAV_KEYS = ['userManagement'];
+const AUTH_TOKEN_KEY = 'auth_token';
+const AUTH_REFRESH_TOKEN_KEY = 'auth_refresh_token';
+const AUTH_UNAUTHORIZED_EVENT = 'auth:unauthorized';
+let refreshRequestPromise = null;
 
 const I18N = {
   en: {
@@ -16,13 +22,71 @@ const I18N = {
       playbook: 'Playbook Logic',
       adGroups: 'Ad Groups',
       history: 'Optimization History',
+      autoReplyMail: 'Auto Reply Mail',
+      userManagement: 'User Management',
+    },
+    navGroup: {
+      ads: 'Ads',
+      autoReply: 'Auto Reply',
+      settings: 'Admin',
+    },
+    autoReply: {
+      title: 'Auto Reply Mail',
+      subtitle: 'Customer-service auto reply module for buyer messages.',
+      tip: 'Use Customer Service APIs: fetch -> process -> review -> send.',
+      fetchBtn: 'Fetch Messages',
+      reloadBtn: 'Reload',
+      processBtn: 'Generate Reply',
+      saveBtn: 'Save Edit',
+      approveBtn: 'Approve',
+      sendBtn: 'Send',
+      buyerMessage: 'Buyer Message',
+      aiReply: 'AI Reply',
+      editReply: 'Edit Reply',
+      status: 'Status',
+      createdAt: 'Created At',
+      actions: 'Actions',
+      empty: 'No messages for this store yet.',
+      loadedCount: 'Loaded',
+      fetchResult: 'Fetch result',
+    },
+    userMgmt: {
+      title: 'User Management',
+      onlyAdmin: 'Only admin can manage users.',
+      createTitle: 'Create User',
+      username: 'Username',
+      email: 'Email',
+      password: 'Password',
+      role: 'Role',
+      createBtn: 'Create',
+      listTitle: 'Users',
+      status: 'Status',
+      actions: 'Actions',
+      resetPwd: 'Reset Password',
+      saveRole: 'Save Role',
+      deactivate: 'Deactivate',
+      activate: 'Activate',
+      stores: 'Store Permissions',
+      reload: 'Reload',
+      updated: 'Updated',
     },
     headerNote: 'All APIs enforce strict store-level data isolation.',
     storeSwitcher: 'Store Switcher',
     language: 'Language',
+    logout: 'Logout',
     loading: 'Loading...',
     requestFailed: 'Request failed',
     genericEmpty: 'No content returned.',
+    auth: {
+      loginTitle: 'Sign In',
+      loginSubtitle: 'Use your account to access store-scoped data.',
+      accountLabel: 'Username or Email',
+      accountPlaceholder: '',
+      passwordLabel: 'Password',
+      loginBtn: 'Login',
+      loggingIn: 'Signing in...',
+      invalid: 'Invalid account or password',
+    },
     status: {
       healthy: 'Healthy',
       warning: 'Warning',
@@ -55,9 +119,10 @@ const I18N = {
       syncDateRangeLabel: 'Lingxing Sync Date Range',
       syncStartDate: 'Start Date',
       syncEndDate: 'End Date',
-      syncDateHint: 'Leave both empty for default recent 14 days.',
+      syncDateHint: 'Leave both empty for default recent 365 days.',
       syncDateInvalid: 'Please set both start and end dates, and ensure start <= end.',
       syncCurrentStoreOnly: 'Only the currently selected store will be synced.',
+      contextExportBtn: 'Download Context Package',
       uploadBtn: 'Upload & Analyze File',
       uploadLabel: 'Ad Group Excel File',
       uploadHint: 'Upload an Excel file with two sheets: daily ad data + operation history.',
@@ -94,13 +159,30 @@ const I18N = {
         currentBid: 'Current Bid',
         suggestedBid: 'Suggested Bid',
         clicks: 'Clicks',
-        spend: 'Spend',
+        spend: 'Total Cost',
         sales: 'Sales',
         acos: 'ACoS',
       },
       syncTableEmpty: 'No ad groups with spend in the selected period.',
       sortAsc: 'Ascending',
       sortDesc: 'Descending',
+      syncJobLabel: 'Lingxing Sync Task',
+      syncJobIdle: 'No Lingxing sync task is running.',
+      syncJobQueued: 'Sync task queued, waiting for execution.',
+      syncJobRunning: 'Lingxing sync task is running...',
+      syncJobDone: 'Lingxing sync completed.',
+      syncJobFailed: 'Lingxing sync failed.',
+      syncJobProgress: 'Progress',
+      syncJobStage: 'Stage',
+      contextStoreHint: 'Context Package supports Lingxing stores only (store_id should start with lingxing_).',
+      contextJobLabel: 'Context Package Export Task',
+      contextJobIdle: 'No context export task is running.',
+      contextJobQueued: 'Task queued, waiting for execution.',
+      contextJobRunning: 'Task is running...',
+      contextJobDone: 'Task finished. Download started.',
+      contextJobFailed: 'Context export failed.',
+      contextJobProgress: 'Progress',
+      contextJobStage: 'Stage',
     },
   },
   zh: {
@@ -112,13 +194,71 @@ const I18N = {
       playbook: '策略白皮书逻辑',
       adGroups: '广告组调优',
       history: '优化历史复盘',
+      autoReplyMail: '自动回复邮件',
+      userManagement: '用户管理',
+    },
+    navGroup: {
+      ads: '广告',
+      autoReply: '自动回复邮件',
+      settings: '管理员',
+    },
+    autoReply: {
+      title: '自动回复邮件',
+      subtitle: '买家消息客服自动回复模块。',
+      tip: '使用客服 API 流程：拉取消息 -> AI 处理 -> 人工审核 -> 发送。',
+      fetchBtn: '拉取邮件',
+      reloadBtn: '刷新列表',
+      processBtn: '生成回复',
+      saveBtn: '保存编辑',
+      approveBtn: '审核通过',
+      sendBtn: '发送',
+      buyerMessage: '买家消息',
+      aiReply: 'AI 回复',
+      editReply: '编辑回复',
+      status: '状态',
+      createdAt: '创建时间',
+      actions: '操作',
+      empty: '当前店铺暂无邮件消息。',
+      loadedCount: '已加载',
+      fetchResult: '拉取结果',
+    },
+    userMgmt: {
+      title: '用户管理',
+      onlyAdmin: '仅管理员可管理用户。',
+      createTitle: '新增用户',
+      username: '用户名',
+      email: '邮箱',
+      password: '密码',
+      role: '角色',
+      createBtn: '创建',
+      listTitle: '用户列表',
+      status: '状态',
+      actions: '操作',
+      resetPwd: '重置密码',
+      saveRole: '保存角色',
+      deactivate: '停用',
+      activate: '启用',
+      stores: '店铺权限',
+      reload: '刷新',
+      updated: '已更新',
     },
     headerNote: '所有接口均按店铺维度隔离，避免跨店数据混用。',
     storeSwitcher: '店铺切换',
     language: '语言',
+    logout: '退出登录',
     loading: '正在加载...',
     requestFailed: '请求失败',
     genericEmpty: '未返回内容。',
+    auth: {
+      loginTitle: '登录系统',
+      loginSubtitle: '请使用账号访问已授权店铺数据。',
+      accountLabel: '用户名或邮箱',
+      accountPlaceholder: '',
+      passwordLabel: '密码',
+      loginBtn: '登录',
+      loggingIn: '登录中...',
+      invalid: '账号或密码错误',
+    },
     status: {
       healthy: '健康',
       warning: '预警',
@@ -151,9 +291,10 @@ const I18N = {
       syncDateRangeLabel: '领星同步日期筛选',
       syncStartDate: '开始日期',
       syncEndDate: '结束日期',
-      syncDateHint: '开始和结束都留空时，默认同步最近 14 天。',
+      syncDateHint: '开始和结束都留空时，默认同步最近 365 天。',
       syncDateInvalid: '请同时填写开始/结束日期，并确保开始日期不晚于结束日期。',
       syncCurrentStoreOnly: '仅同步当前已选店铺的数据。',
+      contextExportBtn: '下载 Context Package',
       uploadBtn: '上传文档并分析',
       uploadLabel: '广告组 Excel 文件',
       uploadHint: '请上传包含两个 sheet 的 Excel：广告日数据 + 操作历史。',
@@ -190,16 +331,175 @@ const I18N = {
         currentBid: '当前bid',
         suggestedBid: '建议bid',
         clicks: '点击次数',
-        spend: '消耗金额',
+        spend: '总花费',
         sales: '销售额',
         acos: 'ACoS',
       },
       syncTableEmpty: '所选周期内没有消耗金额大于 0 的广告组。',
       sortAsc: '升序',
       sortDesc: '降序',
+      syncJobLabel: '领星同步任务',
+      syncJobIdle: '当前没有进行中的领星同步任务。',
+      syncJobQueued: '同步任务已入队，等待执行。',
+      syncJobRunning: '领星同步任务执行中...',
+      syncJobDone: '领星同步完成。',
+      syncJobFailed: '领星同步失败。',
+      syncJobProgress: '进度',
+      syncJobStage: '阶段',
+      contextStoreHint: 'Context Package 仅支持领星店铺（store_id 需以 lingxing_ 开头）。',
+      contextJobLabel: 'Context Package 导出任务',
+      contextJobIdle: '当前没有进行中的导出任务。',
+      contextJobQueued: '任务已入队，等待执行。',
+      contextJobRunning: '任务执行中...',
+      contextJobDone: '任务完成，已开始下载。',
+      contextJobFailed: 'Context 导出失败。',
+      contextJobProgress: '进度',
+      contextJobStage: '阶段',
     },
   },
 };
+
+function getStoredAuthToken() {
+  try {
+    return window.localStorage.getItem(AUTH_TOKEN_KEY) || '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function getStoredRefreshToken() {
+  try {
+    return window.localStorage.getItem(AUTH_REFRESH_TOKEN_KEY) || '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function setStoredAuthToken(token) {
+  try {
+    if (token) {
+      window.localStorage.setItem(AUTH_TOKEN_KEY, token);
+    } else {
+      window.localStorage.removeItem(AUTH_TOKEN_KEY);
+    }
+  } catch (_) {
+    // Ignore localStorage failures.
+  }
+}
+
+function setStoredRefreshToken(token) {
+  try {
+    if (token) {
+      window.localStorage.setItem(AUTH_REFRESH_TOKEN_KEY, token);
+    } else {
+      window.localStorage.removeItem(AUTH_REFRESH_TOKEN_KEY);
+    }
+  } catch (_) {
+    // Ignore localStorage failures.
+  }
+}
+
+function clearStoredAuthTokens() {
+  setStoredAuthToken('');
+  setStoredRefreshToken('');
+}
+
+function notifyUnauthorized() {
+  window.dispatchEvent(new CustomEvent(AUTH_UNAUTHORIZED_EVENT));
+}
+
+function withAuthHeaders(headers = {}, includeJson = false) {
+  const merged = { ...headers };
+  const token = getStoredAuthToken();
+  if (token && !merged.Authorization) {
+    merged.Authorization = `Bearer ${token}`;
+  }
+  if (includeJson && !merged['Content-Type']) {
+    merged['Content-Type'] = 'application/json';
+  }
+  return merged;
+}
+
+function authBypass(url) {
+  const text = String(url || '');
+  return text.includes('/api/auth/login') || text.includes('/api/auth/register') || text.includes('/api/auth/refresh');
+}
+
+function stripAuthorization(headers = {}) {
+  const normalized = { ...headers };
+  delete normalized.Authorization;
+  delete normalized.authorization;
+  return normalized;
+}
+
+async function refreshAccessToken(requestFailedText) {
+  if (refreshRequestPromise) {
+    return refreshRequestPromise;
+  }
+
+  const refreshToken = getStoredRefreshToken();
+  if (!refreshToken) {
+    throw new Error('Missing refresh token');
+  }
+
+  refreshRequestPromise = (async () => {
+    const res = await fetch('/api/auth/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      const err = detail?.detail || `${requestFailedText}: ${res.status}`;
+      clearStoredAuthTokens();
+      notifyUnauthorized();
+      throw new Error(err);
+    }
+
+    const data = await res.json();
+    const nextAccessToken = String(data.access_token || '').trim();
+    const nextRefreshToken = String(data.refresh_token || '').trim();
+    if (!nextAccessToken || !nextRefreshToken) {
+      clearStoredAuthTokens();
+      notifyUnauthorized();
+      throw new Error('Invalid refresh response');
+    }
+
+    setStoredAuthToken(nextAccessToken);
+    setStoredRefreshToken(nextRefreshToken);
+    return nextAccessToken;
+  })().finally(() => {
+    refreshRequestPromise = null;
+  });
+
+  return refreshRequestPromise;
+}
+
+async function fetchWithAuthRetry(url, options, requestFailedText) {
+  const finalOptions = options ? { ...options } : {};
+  finalOptions.headers = withAuthHeaders(finalOptions.headers || {});
+
+  let res = await fetch(url, finalOptions);
+  if (res.status === 401) {
+    try {
+      await refreshAccessToken(requestFailedText);
+      const retryOptions = {
+        ...finalOptions,
+        headers: withAuthHeaders(stripAuthorization(finalOptions.headers || {})),
+      };
+      res = await fetch(url, retryOptions);
+    } catch (_) {
+      // refreshAccessToken already handled auth reset + event.
+    }
+  }
+
+  if (res.status === 401) {
+    clearStoredAuthTokens();
+    notifyUnauthorized();
+  }
+  return res;
+}
 
 function getDefaultLanguage() {
   try {
@@ -334,13 +634,21 @@ function TextOutputBlock({ title, text, emptyText, meta, expanded, onToggle, onE
 }
 
 async function fetchJson(url, options, requestFailedText) {
-  const res = await fetch(url, options);
+  const finalOptions = options ? { ...options } : {};
+  const bypass = authBypass(url);
+  const res = bypass
+    ? await fetch(url, finalOptions)
+    : await fetchWithAuthRetry(url, finalOptions, requestFailedText);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
     const err = detail?.detail || `${requestFailedText}: ${res.status}`;
     throw new Error(err);
   }
   return res.json();
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function DashboardTable({ rows, t, language }) {
@@ -427,6 +735,13 @@ function OptimizationCases({ cases, t, language }) {
       )}
     </div>
   `;
+}
+
+function formatDateTime(isoValue) {
+  if (!isoValue) return '-';
+  const dt = new Date(isoValue);
+  if (Number.isNaN(dt.getTime())) return String(isoValue);
+  return dt.toLocaleString();
 }
 
 function LingxingSyncTable({ rows, t, language, sortKey, sortDir, onSort }) {
@@ -546,6 +861,13 @@ function LingxingSyncTable({ rows, t, language, sortKey, sortDir, onSort }) {
 function App() {
   const [language, setLanguage] = useState(getDefaultLanguage());
   const t = useMemo(() => I18N[language], [language]);
+  const [authToken, setAuthToken] = useState(getStoredAuthToken());
+  const [authUser, setAuthUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [loginAccount, setLoginAccount] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState('');
 
   const [stores, setStores] = useState([]);
   const [selectedStore, setSelectedStore] = useState('');
@@ -569,10 +891,103 @@ function App() {
   const [syncSortDir, setSyncSortDir] = useState('asc');
   const [syncStartDate, setSyncStartDate] = useState('');
   const [syncEndDate, setSyncEndDate] = useState('');
+  const [syncJobStatus, setSyncJobStatus] = useState(null);
+  const [contextJobStatus, setContextJobStatus] = useState(null);
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [adminStores, setAdminStores] = useState([]);
+  const [userStoreAccessMap, setUserStoreAccessMap] = useState({});
+  const [userRoleDrafts, setUserRoleDrafts] = useState({});
+  const [userPasswordDrafts, setUserPasswordDrafts] = useState({});
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminNotice, setAdminNotice] = useState('');
+  const [newUserUsername, setNewUserUsername] = useState('');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [newUserRole, setNewUserRole] = useState('viewer');
+  const [mailRows, setMailRows] = useState([]);
+  const [mailLoading, setMailLoading] = useState(false);
+  const [mailNotice, setMailNotice] = useState('');
+  const [replyDrafts, setReplyDrafts] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const syncPollNonceRef = useRef(0);
+  const syncPollingJobIdRef = useRef('');
+
+  const contextJobRunning = contextJobStatus && ['queued', 'running'].includes(contextJobStatus.status);
+  const syncJobRunning = syncJobStatus && ['queued', 'running'].includes(syncJobStatus.status);
 
   const fileTimeTag = () => new Date().toISOString().replace(/[:.]/g, '-');
+
+  const stopSyncPolling = () => {
+    syncPollNonceRef.current += 1;
+    syncPollingJobIdRef.current = '';
+  };
+
+  const applyLingxingSyncResult = async (syncRes, activeStoreId) => {
+    const summary = JSON.stringify(syncRes || {}, null, 2);
+    setSyncSummary(summary);
+    const tableRows = ((syncRes?.stores) || []).flatMap((store) => store.lingxing_output_rows || []);
+    setSyncRows(tableRows);
+    setSyncSortKey('campaign');
+    setSyncSortDir('asc');
+
+    const storeRes = await fetchJson('/api/stores?include_bound=true', undefined, t.requestFailed);
+    const newStores = normalizeStores(storeRes.stores || storeRes.store_ids || []);
+    setStores(newStores);
+    const storeIds = newStores.map((item) => item.store_id);
+
+    if (!newStores.length) return;
+    if (!storeIds.includes(activeStoreId)) {
+      setSelectedStore(newStores[0].store_id);
+      return;
+    }
+
+    const [perfRes, recRes, caseRes] = await Promise.all([
+      fetchJson(`/api/stores/${activeStoreId}/performance`, undefined, t.requestFailed),
+      fetchJson(`/api/stores/${activeStoreId}/ad-group-recommendations`, undefined, t.requestFailed),
+      fetchJson(`/api/stores/${activeStoreId}/optimization-cases`, undefined, t.requestFailed),
+    ]);
+    setPerformanceRows(perfRes.daily_performance || []);
+    setRecommendations(recRes.recommendations || []);
+    setCases(caseRes.cases || []);
+  };
+
+  const pollLingxingSyncJob = async (jobId, activeStoreId) => {
+    if (!jobId) return;
+    if (syncPollingJobIdRef.current === jobId) return;
+
+    const pollNonce = syncPollNonceRef.current + 1;
+    syncPollNonceRef.current = pollNonce;
+    syncPollingJobIdRef.current = jobId;
+
+    try {
+      while (true) {
+        await sleep(2000);
+        if (syncPollNonceRef.current !== pollNonce) return;
+
+        const statusResp = await fetchJson(`/api/lingxing/sync/jobs/${jobId}`, undefined, t.requestFailed);
+        if (syncPollNonceRef.current !== pollNonce) return;
+        setSyncJobStatus(statusResp);
+
+        if (statusResp.status === 'failed') {
+          throw new Error(statusResp.message || t.playbook.syncJobFailed);
+        }
+        if (statusResp.status !== 'succeeded') {
+          continue;
+        }
+
+        await applyLingxingSyncResult(statusResp.result || {}, activeStoreId);
+        setSyncJobStatus({
+          ...statusResp,
+          message: t.playbook.syncJobDone,
+        });
+        return;
+      }
+    } finally {
+      if (syncPollNonceRef.current === pollNonce) {
+        syncPollingJobIdRef.current = '';
+      }
+    }
+  };
 
   useEffect(() => {
     document.title = t.pageTitle;
@@ -585,6 +1000,433 @@ function App() {
   }, [t, language]);
 
   useEffect(() => {
+    const onUnauthorized = () => {
+      stopSyncPolling();
+      clearStoredAuthTokens();
+      setAuthToken('');
+      setAuthUser(null);
+      setStores([]);
+      setSelectedStore('');
+      setError('');
+      setLoginError('');
+      setAuthLoading(false);
+    };
+    window.addEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauthorized);
+  }, []);
+
+  useEffect(() => {
+    if (!authToken) {
+      setAuthUser(null);
+      setAuthLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setAuthLoading(true);
+    fetchJson('/api/auth/me', undefined, t.requestFailed)
+      .then((me) => {
+        if (cancelled) return;
+        setAuthUser(me);
+        setLoginError('');
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setAuthToken('');
+        setAuthUser(null);
+        setLoginError(err.message || t.auth.invalid);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setAuthLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authToken, t.requestFailed, t.auth.invalid]);
+
+  const onLogin = async (event) => {
+    event.preventDefault();
+    const account = (loginAccount || '').trim();
+    if (!account || !loginPassword) {
+      setLoginError(t.auth.invalid);
+      return;
+    }
+
+    setLoginLoading(true);
+    setLoginError('');
+    try {
+      const data = await fetchJson(
+        '/api/auth/login',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            account,
+            password: loginPassword,
+          }),
+        },
+        t.requestFailed,
+      );
+      const token = data.access_token || '';
+      const refreshToken = data.refresh_token || '';
+      setStoredAuthToken(token);
+      setStoredRefreshToken(refreshToken);
+      setAuthToken(token);
+      setLoginPassword('');
+    } catch (err) {
+      clearStoredAuthTokens();
+      setAuthToken('');
+      setLoginError(err.message || t.auth.invalid);
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const onLogout = () => {
+    stopSyncPolling();
+    clearStoredAuthTokens();
+    setAuthToken('');
+    setAuthUser(null);
+    setStores([]);
+    setSelectedStore('');
+  };
+
+  const loadUserManagementData = async () => {
+    if (!authUser || authUser.role !== 'admin') return;
+    setAdminLoading(true);
+    setAdminNotice('');
+    setError('');
+    try {
+      const [usersResp, storesResp] = await Promise.all([
+        fetchJson('/api/auth/users', undefined, t.requestFailed),
+        fetchJson('/api/stores?include_bound=true', undefined, t.requestFailed),
+      ]);
+
+      const users = usersResp.items || [];
+      const storesList = normalizeStores(storesResp.stores || storesResp.store_ids || []);
+      const storeAccessEntries = await Promise.all(
+        users.map(async (user) => {
+          const accessResp = await fetchJson(
+            `/api/auth/users/${user.user_id}/stores`,
+            undefined,
+            t.requestFailed,
+          );
+          const accessMap = {};
+          (accessResp.stores || []).forEach((s) => {
+            accessMap[s.external_store_id] = true;
+          });
+          return [user.user_id, accessMap];
+        }),
+      );
+
+      setAdminUsers(users);
+      setAdminStores(storesList);
+      setUserStoreAccessMap(Object.fromEntries(storeAccessEntries));
+      setUserRoleDrafts(
+        Object.fromEntries(users.map((u) => [u.user_id, u.role || 'viewer'])),
+      );
+      setUserPasswordDrafts({});
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const onCreateManagedUser = async () => {
+    if (!newUserUsername.trim() || !newUserPassword) {
+      setError(t.requestFailed);
+      return;
+    }
+    setAdminLoading(true);
+    setAdminNotice('');
+    setError('');
+    try {
+      await fetchJson(
+        '/api/auth/users',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: newUserUsername.trim(),
+            password: newUserPassword,
+            role: newUserRole,
+          }),
+        },
+        t.requestFailed,
+      );
+      setNewUserUsername('');
+      setNewUserPassword('');
+      setNewUserRole('viewer');
+      setAdminNotice(t.userMgmt.updated);
+      await loadUserManagementData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const onSaveManagedUserRole = async (userId) => {
+    const role = userRoleDrafts[userId] || 'viewer';
+    setAdminLoading(true);
+    setAdminNotice('');
+    setError('');
+    try {
+      await fetchJson(
+        `/api/auth/users/${userId}/role`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role }),
+        },
+        t.requestFailed,
+      );
+      setAdminNotice(t.userMgmt.updated);
+      await loadUserManagementData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const onResetManagedUserPassword = async (userId) => {
+    const newPassword = userPasswordDrafts[userId] || '';
+    if (!newPassword) return;
+    setAdminLoading(true);
+    setAdminNotice('');
+    setError('');
+    try {
+      await fetchJson(
+        `/api/auth/users/${userId}/password`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ new_password: newPassword }),
+        },
+        t.requestFailed,
+      );
+      setUserPasswordDrafts((prev) => ({ ...prev, [userId]: '' }));
+      setAdminNotice(t.userMgmt.updated);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const onToggleManagedUserStatus = async (user) => {
+    const nextStatus = user.status === 'active' ? 'inactive' : 'active';
+    setAdminLoading(true);
+    setAdminNotice('');
+    setError('');
+    try {
+      await fetchJson(
+        `/api/auth/users/${user.user_id}/status`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: nextStatus }),
+        },
+        t.requestFailed,
+      );
+      setAdminNotice(t.userMgmt.updated);
+      await loadUserManagementData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const onToggleManagedStoreAccess = async (userId, store) => {
+    const hasAccess = Boolean(userStoreAccessMap?.[userId]?.[store.store_id]);
+    setAdminLoading(true);
+    setAdminNotice('');
+    setError('');
+    try {
+      if (hasAccess) {
+        await fetchJson(
+          `/api/auth/users/${userId}/stores/${encodeURIComponent(store.store_id)}`,
+          { method: 'DELETE' },
+          t.requestFailed,
+        );
+      } else {
+        await fetchJson(
+          `/api/auth/users/${userId}/stores`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              external_store_id: store.store_id,
+              store_name: store.store_name,
+            }),
+          },
+          t.requestFailed,
+        );
+      }
+      setAdminNotice(t.userMgmt.updated);
+      await loadUserManagementData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdminLoading(false);
+    }
+  };
+
+  const loadCustomerMessages = async () => {
+    if (!selectedStore) return;
+    setMailLoading(true);
+    setMailNotice('');
+    setError('');
+    try {
+      const data = await fetchJson(
+        `/api/customer-service/stores/${encodeURIComponent(selectedStore)}/messages?limit=200`,
+        undefined,
+        t.requestFailed,
+      );
+      const items = data.items || [];
+      setMailRows(items);
+      setReplyDrafts(
+        Object.fromEntries(
+          items.map((item) => [item.id, item.final_reply || item.ai_reply || '']),
+        ),
+      );
+      setMailNotice(`${t.autoReply.loadedCount}: ${items.length}`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setMailLoading(false);
+    }
+  };
+
+  const onFetchCustomerMessages = async () => {
+    if (!selectedStore) return;
+    setMailLoading(true);
+    setMailNotice('');
+    setError('');
+    try {
+      const result = await fetchJson(
+        `/api/customer-service/stores/${encodeURIComponent(selectedStore)}/messages/fetch`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            auto_process: false,
+            async_mode: false,
+          }),
+        },
+        t.requestFailed,
+      );
+      setMailNotice(
+        `${t.autoReply.fetchResult}: fetched=${result.fetched_count || 0}, created=${result.created_count || 0}`,
+      );
+      await loadCustomerMessages();
+    } catch (err) {
+      setError(err.message);
+      setMailLoading(false);
+    }
+  };
+
+  const onProcessMessage = async (messageId) => {
+    if (!selectedStore) return;
+    setMailLoading(true);
+    setMailNotice('');
+    setError('');
+    try {
+      await fetchJson(
+        `/api/customer-service/stores/${encodeURIComponent(selectedStore)}/messages/${messageId}/process`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            async_mode: false,
+            force_regenerate: true,
+            allow_auto_send: false,
+          }),
+        },
+        t.requestFailed,
+      );
+      await loadCustomerMessages();
+    } catch (err) {
+      setError(err.message);
+      setMailLoading(false);
+    }
+  };
+
+  const onSaveReply = async (messageId) => {
+    if (!selectedStore) return;
+    const finalReply = String(replyDrafts[messageId] || '').trim();
+    if (!finalReply) return;
+    setMailLoading(true);
+    setMailNotice('');
+    setError('');
+    try {
+      await fetchJson(
+        `/api/customer-service/stores/${encodeURIComponent(selectedStore)}/messages/${messageId}/reply`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ final_reply: finalReply }),
+        },
+        t.requestFailed,
+      );
+      await loadCustomerMessages();
+    } catch (err) {
+      setError(err.message);
+      setMailLoading(false);
+    }
+  };
+
+  const onApproveMessage = async (messageId) => {
+    if (!selectedStore) return;
+    setMailLoading(true);
+    setMailNotice('');
+    setError('');
+    try {
+      await fetchJson(
+        `/api/customer-service/stores/${encodeURIComponent(selectedStore)}/messages/${messageId}/approve`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        },
+        t.requestFailed,
+      );
+      await loadCustomerMessages();
+    } catch (err) {
+      setError(err.message);
+      setMailLoading(false);
+    }
+  };
+
+  const onSendMessage = async (messageId) => {
+    if (!selectedStore) return;
+    setMailLoading(true);
+    setMailNotice('');
+    setError('');
+    try {
+      await fetchJson(
+        `/api/customer-service/stores/${encodeURIComponent(selectedStore)}/messages/${messageId}/send`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ async_mode: false }),
+        },
+        t.requestFailed,
+      );
+      await loadCustomerMessages();
+    } catch (err) {
+      setError(err.message);
+      setMailLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!authUser) return;
     fetchJson('/api/stores?include_bound=true', undefined, I18N.en.requestFailed)
       .then((data) => {
         const options = normalizeStores(data.stores || data.store_ids || []);
@@ -595,10 +1437,59 @@ function App() {
         }
       })
       .catch((err) => setError(err.message));
-  }, []);
+  }, [authUser]);
 
   useEffect(() => {
     if (!selectedStore) return;
+    stopSyncPolling();
+    setContextJobStatus(null);
+    setSyncJobStatus(null);
+    setSyncSummary('');
+    setSyncRows([]);
+  }, [selectedStore]);
+
+  useEffect(() => {
+    if (!authUser || !selectedStore) return;
+    let disposed = false;
+
+    fetchJson(
+      `/api/lingxing/sync/jobs/latest/by-store?store_id=${encodeURIComponent(selectedStore)}`,
+      undefined,
+      t.requestFailed,
+    )
+      .then(async (payload) => {
+        if (disposed) return;
+        const latestJob = payload?.job;
+        if (!latestJob) return;
+
+        setSyncJobStatus(latestJob);
+        if (latestJob.status === 'succeeded' && latestJob.result) {
+          await applyLingxingSyncResult(latestJob.result, selectedStore);
+          if (!disposed) {
+            setSyncJobStatus({
+              ...latestJob,
+              message: t.playbook.syncJobDone,
+            });
+          }
+          return;
+        }
+
+        if (latestJob.status === 'queued' || latestJob.status === 'running') {
+          await pollLingxingSyncJob(latestJob.job_id, selectedStore);
+        }
+      })
+      .catch(() => {
+        // Ignore missing latest job or transient errors.
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [authUser, selectedStore, t.requestFailed, t.playbook.syncJobDone]);
+
+  useEffect(() => {
+    if (!authUser || !selectedStore) return;
+    if (!ADS_NAV_KEYS.includes(view)) return;
     const selectedOption = stores.find((item) => item.store_id === selectedStore);
     if (selectedOption && !selectedOption.has_local_data) {
       setLoading(true);
@@ -606,7 +1497,6 @@ function App() {
       setPerformanceRows([]);
       setRecommendations([]);
       setCases([]);
-      setSyncRows([]);
 
       fetchJson(`/api/stores/${selectedStore}/whitepaper`, undefined, t.requestFailed)
         .then((whitepaperRes) => {
@@ -669,7 +1559,9 @@ function App() {
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [
+    authUser,
     selectedStore,
+    view,
     stores,
     t.requestFailed,
     t.playbook.lines,
@@ -677,6 +1569,21 @@ function App() {
     t.playbook.whitepaperStorageEmpty,
     t.playbook.storeNotSyncedHint,
   ]);
+
+  useEffect(() => {
+    if (ADS_NAV_KEYS.includes(view)) return;
+    setLoading(false);
+  }, [view]);
+
+  useEffect(() => {
+    if (!authUser || !selectedStore || view !== 'autoReplyMail') return;
+    loadCustomerMessages();
+  }, [authUser, selectedStore, view]);
+
+  useEffect(() => {
+    if (!authUser || authUser.role !== 'admin' || view !== 'userManagement') return;
+    loadUserManagementData();
+  }, [authUser, view]);
 
   const onGenerateWhitepaper = async () => {
     if (!selectedStore) return;
@@ -707,6 +1614,7 @@ function App() {
 
   const onSyncLingxing = async () => {
     if (!selectedStore) return;
+    if (syncJobRunning) return;
     if ((syncStartDate && !syncEndDate) || (!syncStartDate && syncEndDate)) {
       setError(t.playbook.syncDateInvalid);
       return;
@@ -719,6 +1627,13 @@ function App() {
     setLoading(true);
     setError('');
     setSyncRows([]);
+    setSyncSummary('');
+    setSyncJobStatus({
+      status: 'queued',
+      progress_pct: 0,
+      stage: 'queued',
+      message: t.playbook.syncJobQueued,
+    });
     try {
       const requestBody = { store_id: selectedStore };
       if (syncStartDate && syncEndDate) {
@@ -726,8 +1641,8 @@ function App() {
         requestBody.end_date = syncEndDate;
       }
 
-      const syncRes = await fetchJson(
-        '/api/lingxing/sync',
+      const createResp = await fetchJson(
+        '/api/lingxing/sync/jobs',
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -735,35 +1650,23 @@ function App() {
         },
         t.requestFailed,
       );
-
-      const summary = JSON.stringify(syncRes, null, 2);
-      setSyncSummary(summary);
-      const tableRows = (syncRes.stores || []).flatMap((store) => store.lingxing_output_rows || []);
-      setSyncRows(tableRows);
-      setSyncSortKey('campaign');
-      setSyncSortDir('asc');
-
-      const storeRes = await fetchJson('/api/stores?include_bound=true', undefined, t.requestFailed);
-      const newStores = normalizeStores(storeRes.stores || storeRes.store_ids || []);
-      setStores(newStores);
-      const storeIds = newStores.map((item) => item.store_id);
-
-      if (newStores.length) {
-        if (!storeIds.includes(selectedStore)) {
-          setSelectedStore(newStores[0].store_id);
-        } else {
-          const [perfRes, recRes, caseRes] = await Promise.all([
-            fetchJson(`/api/stores/${selectedStore}/performance`, undefined, t.requestFailed),
-            fetchJson(`/api/stores/${selectedStore}/ad-group-recommendations`, undefined, t.requestFailed),
-            fetchJson(`/api/stores/${selectedStore}/optimization-cases`, undefined, t.requestFailed),
-          ]);
-          setPerformanceRows(perfRes.daily_performance || []);
-          setRecommendations(recRes.recommendations || []);
-          setCases(caseRes.cases || []);
-        }
-      }
+      const jobId = createResp.job_id;
+      setSyncJobStatus({
+        job_id: jobId,
+        status: 'queued',
+        progress_pct: 0,
+        stage: 'queued',
+        message: t.playbook.syncJobQueued,
+      });
+      await pollLingxingSyncJob(jobId, selectedStore);
     } catch (err) {
-      setError(err.message);
+      const message = err?.message || t.playbook.syncJobFailed;
+      setError(message);
+      setSyncJobStatus((prev) => ({
+        ...(prev || {}),
+        status: 'failed',
+        message,
+      }));
     } finally {
       setLoading(false);
     }
@@ -784,10 +1687,11 @@ function App() {
       formData.append('lang', language);
       formData.append('run_gemini', 'true');
 
-      const response = await fetch('/api/ai/upload-analysis', {
+      const response = await fetchWithAuthRetry('/api/ai/upload-analysis', {
         method: 'POST',
+        headers: withAuthHeaders(),
         body: formData,
-      });
+      }, t.requestFailed);
 
       let payload = {};
       try {
@@ -874,6 +1778,88 @@ function App() {
     downloadTextFile(filename, content);
   };
 
+  const onDownloadContextPackage = async () => {
+    if (!selectedStore) return;
+    if (contextJobRunning) return;
+    setError('');
+    setContextJobStatus({
+      status: 'queued',
+      progress_pct: 0,
+      stage: 'queued',
+      message: t.playbook.contextJobQueued,
+    });
+    try {
+      const createResp = await fetchJson(
+        '/api/lingxing/context-package/jobs',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            store_id: selectedStore,
+            days: 365,
+          }),
+        },
+        t.requestFailed,
+      );
+
+      const jobId = createResp.job_id;
+      setContextJobStatus({
+        job_id: jobId,
+        status: 'queued',
+        progress_pct: 0,
+        stage: 'queued',
+        message: t.playbook.contextJobQueued,
+      });
+
+      while (true) {
+        await sleep(2000);
+        const statusResp = await fetchJson(
+          `/api/lingxing/context-package/jobs/${jobId}`,
+          undefined,
+          t.requestFailed,
+        );
+        setContextJobStatus(statusResp);
+
+        if (statusResp.status === 'failed') {
+          throw new Error(statusResp.message || t.playbook.contextJobFailed);
+        }
+
+        if (statusResp.status !== 'succeeded') {
+          continue;
+        }
+
+        const downloadResp = await fetchWithAuthRetry(
+          `/api/lingxing/context-package/jobs/${jobId}/download`,
+          undefined,
+          t.requestFailed,
+        );
+        if (!downloadResp.ok) {
+          const detail = await downloadResp.json().catch(() => ({}));
+          throw new Error(detail?.detail || `${t.requestFailed}: ${downloadResp.status}`);
+        }
+
+        const blob = await downloadResp.blob();
+        const disposition = downloadResp.headers.get('content-disposition') || '';
+        const matched = disposition.match(/filename="?([^"]+)"?/i);
+        const filename = matched?.[1] || `${selectedStore}_context_package.json`;
+        downloadBlobFile(filename, blob);
+        setContextJobStatus({
+          ...statusResp,
+          message: t.playbook.contextJobDone,
+        });
+        break;
+      }
+    } catch (err) {
+      const message = err?.message || t.playbook.contextJobFailed;
+      setError(message);
+      setContextJobStatus((prev) => ({
+        ...(prev || {}),
+        status: 'failed',
+        message,
+      }));
+    }
+  };
+
   const onImportWhitepaper = async () => {
     if (!selectedStore) return;
     if (!whitepaperFile) {
@@ -886,10 +1872,11 @@ function App() {
     try {
       const formData = new FormData();
       formData.append('file', whitepaperFile);
-      const response = await fetch(`/api/stores/${selectedStore}/whitepaper/import`, {
+      const response = await fetchWithAuthRetry(`/api/stores/${selectedStore}/whitepaper/import`, {
         method: 'POST',
+        headers: withAuthHeaders(),
         body: formData,
-      });
+      }, t.requestFailed);
 
       let payload = {};
       try {
@@ -932,7 +1919,9 @@ function App() {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch(`/api/stores/${selectedStore}/whitepaper/export`);
+      const response = await fetchWithAuthRetry(`/api/stores/${selectedStore}/whitepaper/export`, {
+        headers: withAuthHeaders(),
+      }, t.requestFailed);
       if (!response.ok) {
         const detail = await response.json().catch(() => ({}));
         throw new Error(detail?.detail || `${t.requestFailed}: ${response.status}`);
@@ -950,6 +1939,71 @@ function App() {
     }
   };
 
+  if (authLoading) {
+    return html`
+      <div className="flex min-h-screen items-center justify-center bg-brand-50 p-6">
+        <div className="rounded-xl border border-brand-100 bg-white px-6 py-5 text-sm text-brand-700 shadow-sm">${t.loading}</div>
+      </div>
+    `;
+  }
+
+  if (!authUser) {
+    return html`
+      <div className="flex min-h-screen items-center justify-center bg-brand-50 p-4">
+        <form className="w-full max-w-md rounded-2xl border border-brand-100 bg-white p-6 shadow-lg" onSubmit=${onLogin} autoComplete="on">
+          <div className="mb-4 flex items-center justify-between">
+            <h1 className="text-xl font-semibold text-brand-900">${t.auth.loginTitle}</h1>
+            <select
+              className="rounded-md border border-brand-200 px-2 py-1 text-sm"
+              value=${language}
+              onChange=${(e) => setLanguage(e.target.value)}
+            >
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+          <p className="mb-4 text-sm text-brand-600">${t.auth.loginSubtitle}</p>
+          <label className="mb-3 block">
+            <span className="mb-1 block text-xs font-medium text-brand-700">${t.auth.accountLabel}</span>
+            <input
+              type="text"
+              name="login_account"
+              autoComplete="username"
+              value=${loginAccount}
+              onChange=${(e) => setLoginAccount(e.target.value)}
+              className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
+              placeholder=${t.auth.accountPlaceholder}
+            />
+          </label>
+          <label className="mb-2 block">
+            <span className="mb-1 block text-xs font-medium text-brand-700">${t.auth.passwordLabel}</span>
+            <input
+              type="password"
+              name="login_password"
+              autoComplete="current-password"
+              value=${loginPassword}
+              onChange=${(e) => setLoginPassword(e.target.value)}
+              className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
+              placeholder="********"
+            />
+          </label>
+          ${loginError
+            ? html`<p className="mt-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">${loginError}</p>`
+            : null}
+          <button
+            type="submit"
+            disabled=${Boolean(loginLoading)}
+            className=${`mt-4 w-full rounded-md px-4 py-2 text-sm font-semibold ${
+              loginLoading ? 'cursor-not-allowed bg-brand-200 text-white' : 'bg-brand-700 text-white hover:bg-brand-800'
+            }`}
+          >
+            ${loginLoading ? t.auth.loggingIn : t.auth.loginBtn}
+          </button>
+        </form>
+      </div>
+    `;
+  }
+
   return html`
     <div className="min-h-screen md:flex">
       <aside className="w-full border-b border-brand-100 bg-brand-900 text-brand-50 md:w-64 md:border-b-0 md:border-r">
@@ -958,7 +2012,42 @@ function App() {
           <p className="mt-1 text-xs text-brand-200">${t.appSubtitle}</p>
         </div>
         <nav className="px-3 pb-6">
-          ${NAV_KEYS.map(
+          <p className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-brand-300">${t.navGroup.ads}</p>
+          ${ADS_NAV_KEYS.map(
+            (key) => html`
+              <button
+                key=${key}
+                onClick=${() => setView(key)}
+                className=${`mb-2 w-full rounded-lg px-3 py-2 text-left text-sm transition ${
+                  key === view
+                    ? 'bg-brand-600 text-white'
+                    : 'text-brand-100 hover:bg-brand-800'
+                }`}
+              >
+                ${t.nav[key]}
+              </button>
+            `,
+          )}
+
+          <p className="mb-2 mt-4 px-2 text-xs font-semibold uppercase tracking-wide text-brand-300">${t.navGroup.autoReply}</p>
+          ${AUTO_REPLY_NAV_KEYS.map(
+            (key) => html`
+              <button
+                key=${key}
+                onClick=${() => setView(key)}
+                className=${`mb-2 w-full rounded-lg px-3 py-2 text-left text-sm transition ${
+                  key === view
+                    ? 'bg-brand-600 text-white'
+                    : 'text-brand-100 hover:bg-brand-800'
+                }`}
+              >
+                ${t.nav[key]}
+              </button>
+            `,
+          )}
+
+          <p className="mb-2 mt-4 px-2 text-xs font-semibold uppercase tracking-wide text-brand-300">${t.navGroup.settings}</p>
+          ${SETTINGS_NAV_KEYS.map(
             (key) => html`
               <button
                 key=${key}
@@ -1006,6 +2095,13 @@ function App() {
                   html`<option key=${store.store_id} value=${store.store_id}>${store.store_name}</option>`,
               )}
             </select>
+            <span className="ml-2 rounded-md bg-brand-50 px-2 py-1 text-xs font-semibold text-brand-700">${authUser.username}</span>
+            <button
+              onClick=${onLogout}
+              className="rounded-md border border-brand-300 bg-white px-3 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50"
+            >
+              ${t.logout}
+            </button>
           </div>
         </header>
 
@@ -1084,9 +2180,25 @@ function App() {
                   <div className="mt-4 flex flex-wrap gap-2">
                     <button
                       onClick=${onSyncLingxing}
-                      className="rounded-md border border-brand-300 bg-white px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50"
+                      disabled=${Boolean(syncJobRunning)}
+                      className=${`rounded-md border px-4 py-2 text-sm font-semibold ${
+                        syncJobRunning
+                          ? 'cursor-not-allowed border-brand-100 bg-brand-50 text-brand-300'
+                          : 'border-brand-300 bg-white text-brand-700 hover:bg-brand-50'
+                      }`}
                     >
                       ${t.playbook.syncBtn}
+                    </button>
+                    <button
+                      onClick=${onDownloadContextPackage}
+                      disabled=${Boolean(contextJobRunning)}
+                      className=${`rounded-md border px-4 py-2 text-sm font-semibold ${
+                        contextJobRunning
+                          ? 'cursor-not-allowed border-brand-100 bg-brand-50 text-brand-300'
+                          : 'border-brand-300 bg-white text-brand-700 hover:bg-brand-50'
+                      }`}
+                    >
+                      ${t.playbook.contextExportBtn}
                     </button>
                     <button
                       onClick=${onAnalyzeUploadFile}
@@ -1123,6 +2235,19 @@ function App() {
 
                 <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
                   <h4 className="text-sm font-semibold">${t.playbook.syncSummaryLabel}</h4>
+                  <p className="mt-2 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">
+                    ${syncJobStatus
+                      ? `${t.playbook.syncJobProgress}: ${syncJobStatus.progress_pct ?? 0}% | ${t.playbook.syncJobStage}: ${syncJobStatus.stage || '-'} | ${
+                          syncJobStatus.status === 'failed'
+                            ? (syncJobStatus.message || t.playbook.syncJobFailed)
+                            : syncJobStatus.status === 'succeeded'
+                              ? t.playbook.syncJobDone
+                              : syncJobStatus.status === 'running'
+                                ? t.playbook.syncJobRunning
+                                : t.playbook.syncJobQueued
+                        }`
+                      : t.playbook.syncJobIdle}
+                  </p>
                   ${syncSummary
                     ? html`<${LingxingSyncTable}
                         rows=${syncRows}
@@ -1140,6 +2265,15 @@ function App() {
                         }}
                       />`
                     : html`<p className="mt-2 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">${t.playbook.syncSummaryEmpty}</p>`}
+                </div>
+
+                <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
+                  <h4 className="text-sm font-semibold">${t.playbook.contextJobLabel}</h4>
+                  <p className="mt-2 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">
+                    ${contextJobStatus
+                      ? `${t.playbook.contextJobProgress}: ${contextJobStatus.progress_pct ?? 0}% | ${t.playbook.contextJobStage}: ${contextJobStatus.stage || '-'} | ${contextJobStatus.message || t.playbook.contextJobRunning}`
+                      : t.playbook.contextJobIdle}
+                  </p>
                 </div>
 
                 <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
@@ -1173,6 +2307,280 @@ function App() {
                   onExport=${onExportAdvice}
                   t=${t}
                 />
+              </section>
+            `
+          : null}
+
+        ${view === 'autoReplyMail'
+          ? html`
+              <section className="space-y-4">
+                <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
+                  <h3 className="text-base font-semibold">${t.autoReply.title}</h3>
+                  <p className="mt-1 text-sm text-brand-600">${t.autoReply.subtitle}</p>
+                  <p className="mt-3 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">${t.autoReply.tip}</p>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      onClick=${onFetchCustomerMessages}
+                      disabled=${Boolean(mailLoading)}
+                      className=${`rounded-md border px-4 py-2 text-sm font-semibold ${
+                        mailLoading
+                          ? 'cursor-not-allowed border-brand-100 bg-brand-50 text-brand-300'
+                          : 'border-brand-300 bg-white text-brand-700 hover:bg-brand-50'
+                      }`}
+                    >
+                      ${t.autoReply.fetchBtn}
+                    </button>
+                    <button
+                      onClick=${loadCustomerMessages}
+                      disabled=${Boolean(mailLoading)}
+                      className=${`rounded-md border px-4 py-2 text-sm font-semibold ${
+                        mailLoading
+                          ? 'cursor-not-allowed border-brand-100 bg-brand-50 text-brand-300'
+                          : 'border-brand-300 bg-white text-brand-700 hover:bg-brand-50'
+                      }`}
+                    >
+                      ${t.autoReply.reloadBtn}
+                    </button>
+                  </div>
+                  ${mailLoading ? html`<p className="mt-3 text-sm text-brand-600">${t.loading}</p>` : null}
+                  ${mailNotice
+                    ? html`<p className="mt-3 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-800">${mailNotice}</p>`
+                    : null}
+                </div>
+
+                <div className="overflow-x-auto rounded-xl border border-brand-100 bg-white shadow-sm">
+                  <table className="min-w-[1100px] divide-y divide-brand-100 text-sm">
+                    <thead className="bg-brand-50">
+                      <tr>
+                        <th className="px-3 py-3 text-left font-semibold">${t.autoReply.buyerMessage}</th>
+                        <th className="px-3 py-3 text-left font-semibold">${t.autoReply.aiReply}</th>
+                        <th className="px-3 py-3 text-left font-semibold">${t.autoReply.editReply}</th>
+                        <th className="px-3 py-3 text-left font-semibold">${t.autoReply.status}</th>
+                        <th className="px-3 py-3 text-left font-semibold">${t.autoReply.createdAt}</th>
+                        <th className="px-3 py-3 text-left font-semibold">${t.autoReply.actions}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-brand-50">
+                      ${mailRows.length
+                        ? mailRows.map(
+                            (row) => html`
+                              <tr key=${row.id} className="align-top hover:bg-brand-50/70">
+                                <td className="px-3 py-3">
+                                  <div className="whitespace-pre-wrap break-words text-brand-900">${row.buyer_message || '-'}</div>
+                                </td>
+                                <td className="px-3 py-3">
+                                  <div className="whitespace-pre-wrap break-words text-brand-700">${row.ai_reply || '-'}</div>
+                                </td>
+                                <td className="px-3 py-3">
+                                  <textarea
+                                    value=${replyDrafts[row.id] || ''}
+                                    onChange=${(e) =>
+                                      setReplyDrafts((prev) => ({ ...prev, [row.id]: e.target.value }))}
+                                    rows="3"
+                                    className="w-full rounded-md border border-brand-200 bg-white px-2 py-1 text-sm"
+                                  />
+                                </td>
+                                <td className="px-3 py-3">
+                                  <span className="rounded-full border border-brand-200 bg-brand-50 px-2 py-1 text-xs font-semibold text-brand-700">
+                                    ${row.status || '-'}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-3 text-brand-600">${formatDateTime(row.created_at)}</td>
+                                <td className="px-3 py-3">
+                                  <div className="flex flex-wrap gap-2">
+                                    <button
+                                      onClick=${() => onProcessMessage(row.id)}
+                                      disabled=${Boolean(mailLoading)}
+                                      className="rounded-md border border-brand-300 bg-white px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50"
+                                    >
+                                      ${t.autoReply.processBtn}
+                                    </button>
+                                    <button
+                                      onClick=${() => onSaveReply(row.id)}
+                                      disabled=${Boolean(mailLoading) || !String(replyDrafts[row.id] || '').trim()}
+                                      className="rounded-md border border-brand-300 bg-white px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50 disabled:cursor-not-allowed disabled:border-brand-100 disabled:bg-brand-50 disabled:text-brand-300"
+                                    >
+                                      ${t.autoReply.saveBtn}
+                                    </button>
+                                    <button
+                                      onClick=${() => onApproveMessage(row.id)}
+                                      disabled=${Boolean(mailLoading)}
+                                      className="rounded-md border border-brand-300 bg-white px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50"
+                                    >
+                                      ${t.autoReply.approveBtn}
+                                    </button>
+                                    <button
+                                      onClick=${() => onSendMessage(row.id)}
+                                      disabled=${Boolean(mailLoading) || row.status !== 'approved'}
+                                      className="rounded-md bg-brand-700 px-2 py-1 text-xs font-semibold text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-brand-200"
+                                    >
+                                      ${t.autoReply.sendBtn}
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            `,
+                          )
+                        : html`
+                            <tr>
+                              <td colSpan="6" className="px-3 py-5 text-center text-sm text-brand-600">
+                                ${t.autoReply.empty}
+                              </td>
+                            </tr>
+                          `}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            `
+          : null}
+
+        ${view === 'userManagement'
+          ? html`
+              <section className="space-y-4">
+                ${authUser?.role !== 'admin'
+                  ? html`<div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">${t.userMgmt.onlyAdmin}</div>`
+                  : html`
+                      <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-base font-semibold">${t.userMgmt.createTitle}</h3>
+                          <button
+                            onClick=${loadUserManagementData}
+                            className="rounded-md border border-brand-300 bg-white px-3 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50"
+                          >
+                            ${t.userMgmt.reload}
+                          </button>
+                        </div>
+                        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                          <input
+                            type="text"
+                            name="new_user_username"
+                            autoComplete="off"
+                            value=${newUserUsername}
+                            onChange=${(e) => setNewUserUsername(e.target.value)}
+                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
+                            placeholder=${t.userMgmt.username}
+                          />
+                          <input
+                            type="password"
+                            name="new_user_password"
+                            autoComplete="new-password"
+                            value=${newUserPassword}
+                            onChange=${(e) => setNewUserPassword(e.target.value)}
+                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
+                            placeholder=${t.userMgmt.password}
+                          />
+                          <select
+                            value=${newUserRole}
+                            onChange=${(e) => setNewUserRole(e.target.value)}
+                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
+                          >
+                            <option value="admin">admin</option>
+                            <option value="manager">manager</option>
+                            <option value="staff">staff</option>
+                            <option value="viewer">viewer</option>
+                          </select>
+                        </div>
+                        <button
+                          onClick=${onCreateManagedUser}
+                          disabled=${Boolean(adminLoading)}
+                          className=${`mt-3 rounded-md px-4 py-2 text-sm font-semibold ${
+                            adminLoading ? 'cursor-not-allowed bg-brand-200 text-white' : 'bg-brand-700 text-white hover:bg-brand-800'
+                          }`}
+                        >
+                          ${t.userMgmt.createBtn}
+                        </button>
+                        ${adminNotice
+                          ? html`<p className="mt-3 rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-800">${adminNotice}</p>`
+                          : null}
+                        ${adminLoading ? html`<p className="mt-2 text-sm text-brand-600">${t.loading}</p>` : null}
+                      </div>
+
+                      <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
+                        <h3 className="text-base font-semibold">${t.userMgmt.listTitle}</h3>
+                        <div className="mt-3 space-y-4">
+                          ${adminUsers.map(
+                            (user) => html`
+                              <article key=${user.user_id} className="rounded-lg border border-brand-100 p-3">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <div className="text-sm">
+                                    <div className="font-semibold">${user.username}</div>
+                                    <div className="text-brand-600">${t.userMgmt.status}: ${user.status}</div>
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <select
+                                      value=${userRoleDrafts[user.user_id] || user.role}
+                                      onChange=${(e) =>
+                                        setUserRoleDrafts((prev) => ({ ...prev, [user.user_id]: e.target.value }))}
+                                      className="rounded-md border border-brand-200 px-2 py-1 text-sm"
+                                    >
+                                      <option value="admin">admin</option>
+                                      <option value="manager">manager</option>
+                                      <option value="staff">staff</option>
+                                      <option value="viewer">viewer</option>
+                                    </select>
+                                    <button
+                                      onClick=${() => onSaveManagedUserRole(user.user_id)}
+                                      className="rounded-md border border-brand-300 bg-white px-3 py-1 text-sm font-semibold text-brand-700 hover:bg-brand-50"
+                                    >
+                                      ${t.userMgmt.saveRole}
+                                    </button>
+                                    <button
+                                      onClick=${() => onToggleManagedUserStatus(user)}
+                                      disabled=${authUser?.user_id === user.user_id}
+                                      className=${`rounded-md border px-3 py-1 text-sm font-semibold ${
+                                        authUser?.user_id === user.user_id
+                                          ? 'cursor-not-allowed border-brand-100 bg-brand-50 text-brand-300'
+                                          : 'border-brand-300 bg-white text-brand-700 hover:bg-brand-50'
+                                      }`}
+                                    >
+                                      ${user.status === 'active' ? t.userMgmt.deactivate : t.userMgmt.activate}
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="mt-3 flex flex-wrap items-center gap-2">
+                                  <input
+                                    type="password"
+                                    name=${`reset_user_password_${user.user_id}`}
+                                    autoComplete="new-password"
+                                    value=${userPasswordDrafts[user.user_id] || ''}
+                                    onChange=${(e) =>
+                                      setUserPasswordDrafts((prev) => ({ ...prev, [user.user_id]: e.target.value }))}
+                                    className="rounded-md border border-brand-200 px-3 py-1 text-sm"
+                                    placeholder=${t.userMgmt.password}
+                                  />
+                                  <button
+                                    onClick=${() => onResetManagedUserPassword(user.user_id)}
+                                    className="rounded-md border border-brand-300 bg-white px-3 py-1 text-sm font-semibold text-brand-700 hover:bg-brand-50"
+                                  >
+                                    ${t.userMgmt.resetPwd}
+                                  </button>
+                                </div>
+
+                                <div className="mt-3">
+                                  <p className="mb-2 text-xs font-semibold text-brand-700">${t.userMgmt.stores}</p>
+                                  <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                                    ${adminStores.map(
+                                      (store) => html`
+                                        <label key=${`${user.user_id}_${store.store_id}`} className="inline-flex items-center gap-2 text-sm text-brand-800">
+                                          <input
+                                            type="checkbox"
+                                            checked=${Boolean(userStoreAccessMap?.[user.user_id]?.[store.store_id])}
+                                            onChange=${() => onToggleManagedStoreAccess(user.user_id, store)}
+                                          />
+                                          <span>${store.store_name}</span>
+                                        </label>
+                                      `,
+                                    )}
+                                  </div>
+                                </div>
+                              </article>
+                            `,
+                          )}
+                        </div>
+                      </div>
+                    `}
               </section>
             `
           : null}

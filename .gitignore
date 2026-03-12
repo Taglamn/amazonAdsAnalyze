@@ -2,3 +2,7 @@
 .venv/
 __pycache__/
 *.pyc
+app/data/ops_data.db
+app/data/logs/
+app/data/ops_whitepapers/
+app/data/customer_service/

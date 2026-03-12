@@ -1,241 +1,547 @@
-# Amazon Ads Analyze Dashboard (FastAPI + React + Tailwind)
+# Amazon Ads Analyze 平台说明（给产品经理/项目经理）
 
-一个多租户 Amazon 广告分析面板，包含：
+> 文档目标：用一份 README 说明当前版本“已经实现了什么、怎么实现、如何部署、有什么风险与边界”。
 
-- 每日表现数据看板（Date / Clicks / Spend / ACoS / Sales）
-- 广告组调价建议（含 bid 建议）
-- 调整历史与 7 天前后 ROI 影响分析
-- 基于 Gemini API + 店铺 Playbook 的策略白皮书与建议生成
-- 通过领星 ERP OpenAPI 自动同步多店铺广告数据与操作日志，并直接生成分析结果
-- 支持上传广告组 Excel（广告日数据 + 操作历史）并交给 Gemini 自动分析
+## 1. 项目定位
 
-## 项目结构
+Amazon 广告分析与运营辅助平台，核心覆盖：
 
-- `app/main.py`: FastAPI 服务与 API 路由
-- `app/data_access.py`: 多租户数据模型 `Store` 与仓储读取
-- `app/analysis.py`: 逻辑对齐层，含 `analyze_impact`
-- `app/gemini_bridge.py`: Playbook 加载、租户校验、Gemini 调用
-- `app/lingxing_client.py`: 领星 OpenAPI 客户端（签名、鉴权、分页）
-- `app/lingxing_sync.py`: 领星同步与分析编排（可落盘到本地 CSV）
-- `app/upload_analysis.py`: 上传 Excel 解析与标准化
-- `app/static/index.html`: 前端页面容器 + Tailwind
-- `app/static/app.js`: React 管理面板
-- `scripts/gemini_advice.py`: 独立 AI 决策脚本
-- `scripts/lingxing_sync.py`: 独立领星同步 + 分析脚本
-- `app/data/playbooks/store_playbook_{id}.json`: 店铺策略规则
+- 多店铺（多租户）广告数据管理与隔离
+- 领星 ERP 数据同步（广告报表 + 操作日志）
+- Gemini 白皮书与广告组建议生成
+- Context Package（365 天）导出，供 LLM 深度分析
+- 运营策略白皮书（基于本地 SQLite 的年度因果分析）
+- 客服 AI（Buyer Message 抓取/生成/审核/发送，后端 API 已集成）
 
-## 快速启动
+---
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+## 2. 当前能力矩阵（状态总览）
 
-# 如果要调用 Gemini
-export GEMINI_API_KEY="your_key_here"
-export GEMINI_MODEL="gemini-2.5-flash"
-export GEMINI_MAX_OUTPUT_TOKENS="4096"
-export GEMINI_CONTINUATION_ROUNDS="2"
+| 模块 | 状态 | 入口 | 说明 |
+|---|---|---|---|
+| 多租户店铺切换 + 中英文 UI | 已上线 | Web 前端 | 店铺下拉优先展示绑定店铺名（`store_name`），中英文文案已本地化 |
+| Dashboard / Ad Groups / Optimization History | 已上线 | Web 前端 | 每日表现、广告组建议、7 天前后 ROI 影响案例 |
+| 领星同步（当前店铺 + 日期筛选） | 已上线 | Web 前端 + API | 支持按店铺同步，支持起止日期过滤 |
+| 领星结果表格（Campaign 合并、排序） | 已上线 | Web 前端 | 输出列：广告组合、Campaign、Ad Group、当前/建议 bid、Clicks/Spend/Sales/ACOS |
+| Gemini 白皮书生成 | 已上线 | Web 前端 + API | 文本白皮书，支持中英文 |
+| Gemini 广告建议生成 | 已上线 | Web 前端 + API | 生成建议前会优先读取已保存白皮书 |
+| 白皮书导入/导出 | 已上线 | Web 前端 + API | 支持 `.txt/.md` 导入覆盖、导出 |
+| 上传 Excel 并分析 | 已上线 | Web 前端 + API | 两个 Sheet：广告日数据 + 操作历史，支持自动字段识别 |
+| Context Package 异步导出 | 已上线 | Web 前端 + API | 任务化导出，轮询进度，完成后自动下载 |
+| 运营白皮书（年度/14天因果） | 后端已完成 | API | 基于 SQLite 的增量数据与因果映射 |
+| 运营周期建议（含 High Sensitivity） | 后端已完成 | API | 目标竞价/版位/否定词建议 + 价格库存偏离告警 |
+| 客服 AI（Buyer Message） | 后端已完成 | API + Celery | 拉取消息、AI 回复、人工审核、发送，前端页面尚未接入 |
 
-uvicorn app.main:app --reload
-```
+---
 
-打开：`http://127.0.0.1:8000`
+## 3. 用户侧功能（前端）
 
-## Docker 部署（Alibaba Cloud Linux，公网访问 8080）
+前端文件：`app/static/index.html`、`app/static/app.js`
 
-已提供：
+### 3.1 导航与视图
 
-- `Dockerfile`
-- `docker-compose.yml`
-- `.dockerignore`
+- `Dashboard`
+- `Playbook Logic`
+- `Ad Groups`
+- `Optimization History`
 
-### 1) 服务器准备
+### 3.2 全局能力
 
-```bash
-cd /path/to/Amazon_Ads_Analyze
-cp .env.example .env
-# 编辑 .env，填入 GEMINI / 领星配置
-```
+- 中英文切换（自动跟随浏览器语言，可手动切换）
+- 店铺切换（展示 `store_name`）
+- 店铺隔离说明文案（Header 显示）
 
-### 2) 启动容器（端口 8080）
+### 3.3 Playbook Logic 区功能
 
-```bash
-docker compose up -d --build
-docker compose ps
-```
+- 同步领星数据并分析（仅当前店铺）
+- 日期筛选（`start_date` / `end_date`）
+- 下载 Context Package（异步任务 + 进度）
+- 上传广告组 Excel 并分析
+- 生成白皮书（Gemini）
+- 生成广告组建议（Gemini）
+- 导入白皮书（`.txt/.md`）
+- 导出白皮书
+- 白皮书/建议全文展开显示
 
-容器内服务监听：`0.0.0.0:8080`  
-宿主机映射：`8080:8080`
+### 3.4 领星同步结果展示
 
-访问地址：
+- 表格支持排序
+- Campaign 相同项合并显示（rowSpan）
+- 仅输出有消耗（`spend > 0`）广告组
+- Campaign 名来自领星 Campaign 接口映射
 
-`http://<你的公网IP>:8080`
+---
 
-### 3) 放行云上与系统防火墙端口
+## 4. 技术架构
 
-必须同时满足以下两项：
+## 4.1 技术栈
 
-1. 阿里云安全组入方向放行 `TCP 8080`
-2. 系统防火墙放行 `8080/tcp`（如启用了 `firewalld`）
+- 前端：React（UMD）+ Tailwind CSS
+- 后端：FastAPI
+- 数据处理：pandas
+- 外部系统：Lingxing OpenAPI、Gemini API、Amazon SP-API（客服模块）
+- 存储：
+  - CSV（历史兼容路径）
+  - SQLite（运营分析主数据）
+  - PostgreSQL（客服消息）
+- 队列：Celery + Redis（客服异步任务）
 
-`firewalld` 示例：
+## 4.2 目录与职责
 
-```bash
-sudo firewall-cmd --permanent --add-port=8080/tcp
-sudo firewall-cmd --reload
-```
+- `app/main.py`：主 API 路由与应用启动
+- `app/data_access.py`：CSV 多租户仓储（StoreRepository）
+- `app/analysis.py`：7 天窗口影响分析 + 基础 bid 建议
+- `app/gemini_bridge.py`：Gemini Prompt 构建、调用、语言控制
+- `app/whitepaper_store.py`：文本白皮书保存/读取
+- `app/upload_analysis.py`：上传 Excel 解析与标准化
+- `app/lingxing_client.py`：领星鉴权、签名、分页、容错
+- `app/lingxing_sync.py`：领星同步主流程（CSV 输出 + 前端表格数据）
+- `app/lingxing_context_package.py`：365 天 Context Package 生成
+- `app/context_export_jobs.py`：Context 异步任务管理（进程内）
+- `app/ops_db.py`：SQLite 持久层（运营分析）
+- `app/ops_sync.py`：运营数据增量同步（365 天）
+- `app/ops_whitepaper.py`：年度运营白皮书合成（14 天因果）
+- `app/ops_advisory.py`：运营周期建议（含高敏感标记）
+- `app/ops_logger.py`：运营日志
+- `app/customer_service_ai/*`：客服 AI 子系统（DB/API/LLM/Task/SP-API）
 
-### 4) 常用运维命令
+---
 
-```bash
-# 查看日志
-docker compose logs -f
+## 5. 数据与隔离设计
 
-# 重启
-docker compose restart
+## 5.1 多租户隔离策略
 
-# 停止并删除容器
-docker compose down
-```
+- API 都要求显式 `store_id`
+- `analysis.py` 使用 `_assert_store_scope()` 校验 `history_df/perf_df` 仅含当前店铺
+- Gemini 调用前执行 `validate_metrics_store(metrics, store_id)`，防止跨店铺误传
+- Playbook 文件按店铺拆分：`app/data/playbooks/store_playbook_{store_id}.json`
 
-说明：
+## 5.2 本地数据层
 
-- `docker-compose.yml` 已挂载 `./app/data:/app/app/data`，白皮书与同步数据会持久化到宿主机。
+### A. CSV（兼容层）
 
-## 领星 ERP 配置（手工）
+- `app/data/performance/{store_id}.csv`
+- `app/data/history/{store_id}.csv`
 
-按你的要求，需要先人工配置领星 ERP 用户名与密码，同时配置 OpenAPI 的 AppId / AppSecret。
+用于前端 Dashboard、Ad Groups、Optimization History 的现有读取链路。
 
-可参考 `.env.example`：
+### B. SQLite（运营分析层）
 
-```bash
-cp .env.example .env
-```
+默认：`app/data/ops_data.db`（可由 `OPS_DB_PATH` 覆盖）
 
-关键变量：
+关键表：
+
+- `performance_daily`
+- `change_history`
+- `placement_daily`
+- `query_term_daily`
+- `inventory_snapshot`
+- `sync_coverage`（记录已同步日期，避免重复请求）
+
+### C. 文件输出
+
+- 文本白皮书：`app/data/whitepapers/{store_id}.md`
+- 运营白皮书：`app/data/ops_whitepapers/{store_id}_ops_whitepaper.{json|md}`
+- Context 导出：`app/data/context_packages/{job_id}.json`
+- 运营日志：`app/data/logs/operations.log`
+
+---
+
+## 6. 核心业务流程（实现逻辑）
+
+## 6.1 领星同步与前端展示（当前前端主流程）
+
+1. 前端调用 `POST /api/lingxing/sync`
+2. 后端按日期窗口拉取：
+   - 广告组日报（SP/SB/SD）
+   - 操作日志
+   - Bid 快照
+   - Campaign 基础信息（用于 name 映射）
+3. 生成：
+   - 每日汇总表现
+   - 历史变更（bid 变化）
+   - 优化案例（7 天前后）
+   - 广告组建议
+   - `lingxing_output_rows`（表格显示）
+4. `persist=true` 时落盘 CSV，并自动补默认 playbook
+
+## 6.2 Gemini 白皮书/建议
+
+- 白皮书：`POST /api/stores/{store_id}/ai/whitepaper`
+- 建议：`POST /api/stores/{store_id}/ai/advice`
+
+建议生成逻辑：
+
+1. 优先读取已保存白皮书
+2. 如无白皮书，先自动生成并保存
+3. 构造 Prompt（带店铺规则 + 昨日指标 + 白皮书上下文）
+4. 输出多行可读文本；支持 continuation rounds 防截断
+
+## 6.3 上传 Excel 分析
+
+入口：`POST /api/ai/upload-analysis`（multipart）
+
+- 自动识别两个 sheet（日报/操作历史）
+- 自动匹配中英文字段名
+- 提取 bid 变化
+- 生成摘要 + 启发式建议 + Gemini 白皮书/建议
+
+## 6.4 Context Package（给 Gemini 的结构化上下文）
+
+入口：
+
+- 创建任务：`POST /api/lingxing/context-package/jobs`
+- 查状态：`GET /api/lingxing/context-package/jobs/{job_id}`
+- 下载文件：`GET /api/lingxing/context-package/jobs/{job_id}/download`
+
+实现要点：
+
+- 任务在进程内 `ThreadPoolExecutor` 执行
+- 前端 2 秒轮询
+- 数据粒度：`date + ad_group`
+- 融合：performance + query terms + placement + ASIN 价格/库存
+- placement 输出嵌套到 ad_group 内，包含：
+  - `placement_type`
+  - `top_of_search_is`
+  - `clicks/spend/sales/acos`
+
+## 6.5 运营白皮书与周期建议（后端能力）
+
+### 增量同步（365天）
+
+入口：`POST /api/ops/sync/incremental`
+
+- 读取 `sync_coverage` 找缺失日期
+- 仅请求缺失天数据
+- 写入 SQLite 并更新 coverage
+- 可选导出回 CSV（兼容旧链路）
+
+### 年度运营白皮书
+
+入口：`POST /api/ops/whitepaper/synthesize`
+
+- 分析近 12 个月 targeting bid / placement bid / negative targeting
+- 对每次操作做前后 14 天因果映射
+- 输出 success/failure pattern
+- 生成 `master_strategy`（成功区间、placement benchmark、negative rule、库存价格假设）
+
+### 周期建议
+
+入口：`POST /api/ops/advisory`
+
+- 基于最新广告组数据对齐 `master_strategy`
+- 输出：
+  - targeting bid 建议
+  - placement multiplier 建议
+  - negative targeting 候选词
+- 若当日价格/库存偏离白皮书假设，标记：
+  - `high_sensitivity = true`
+  - `manual_review_required = true`
+
+> 注意：当前前端按钮尚未接入 `/api/ops/*`，该能力目前主要用于 API/后台流程。
+
+## 6.6 客服 AI 子系统（后端 API）
+
+路由前缀：`/api/customer-service`
+
+功能：
+
+- 抓取 Buyer Messages（支持异步任务）
+- AI 流水线处理（分类、情绪、风险、问题提取、场景回复）
+- 自动回复引擎（低风险 + 指定类别自动发送）
+- 人工编辑、审批、发送
+- 状态流转：`new -> ai_generated -> auto_sent | waiting_review -> approved -> sent`
+
+依赖：PostgreSQL + Redis + Celery + Amazon SP-API Token。
+
+核心模块：
+
+1. Message Sync
+2. Message Storage
+3. Message Classification
+4. Sentiment Analysis
+5. Risk Detection
+6. Reply Generation
+7. Auto Reply Engine
+8. Human Review Interface
+9. Message Send
+
+---
+
+## 7. API 清单（按域）
+
+## 7.1 店铺与分析
+
+- `GET /api/stores`
+- `GET /api/stores/{store_id}/performance`
+- `GET /api/stores/{store_id}/optimization-cases`
+- `GET /api/stores/{store_id}/ad-group-recommendations`
+
+## 7.2 Gemini（广告）
+
+- `POST /api/stores/{store_id}/ai/whitepaper`
+- `POST /api/stores/{store_id}/ai/advice`
+
+## 7.3 白皮书管理
+
+- `GET /api/stores/{store_id}/whitepaper`
+- `POST /api/stores/{store_id}/whitepaper/import`
+- `GET /api/stores/{store_id}/whitepaper/export`
+
+## 7.4 领星同步
+
+- `POST /api/lingxing/sync`
+
+## 7.5 Context Package
+
+- `POST /api/lingxing/context-package/jobs`
+- `GET /api/lingxing/context-package/jobs/{job_id}`
+- `GET /api/lingxing/context-package/jobs/{job_id}/download`
+- `POST /api/lingxing/context-package/export`（同步版本，兼容保留）
+
+## 7.6 运营策略（SQLite）
+
+- `POST /api/ops/sync/incremental`
+- `POST /api/ops/whitepaper/synthesize`
+- `GET /api/ops/whitepaper/{store_id}`
+- `POST /api/ops/advisory`
+
+## 7.7 上传分析
+
+- `POST /api/ai/upload-analysis`
+
+## 7.8 客服 AI
+
+- `POST /api/customer-service/messages/fetch`
+- `GET /api/customer-service/messages`
+- `POST /api/customer-service/messages/{message_id}/process`
+- `POST /api/customer-service/messages/{message_id}/generate`
+- `PATCH /api/customer-service/messages/{message_id}/reply`
+- `POST /api/customer-service/messages/{message_id}/approve`
+- `POST /api/customer-service/messages/{message_id}/send`
+
+---
+
+## 8. 配置项（`.env`）
+
+完整示例见 `.env.example`。
+
+### 8.1 Gemini
+
+- `GEMINI_API_KEY`
+- `GEMINI_MODEL`（默认 `gemini-2.5-flash`）
+- `GEMINI_MAX_OUTPUT_TOKENS`
+- `GEMINI_CONTINUATION_ROUNDS`
+
+### 8.2 Lingxing
 
 - `LINGXING_ERP_USERNAME`
 - `LINGXING_ERP_PASSWORD`
 - `LINGXING_APP_ID`
 - `LINGXING_APP_SECRET`
 - `LINGXING_BASE_URL`（默认 `https://openapi.lingxing.com`）
-- `LINGXING_TIMEOUT_SECONDS`（默认 `90`）
-- `LINGXING_MAX_RETRIES`（默认 `3`）
-- `LINGXING_RETRY_BACKOFF_SECONDS`（默认 `1.5`）
-- `LINGXING_TLS_MODE`（`default` 或 `tls1_2`）
-- `LINGXING_PROXY_URL`（如 `http://proxy.company.com:8080`）
-- `LINGXING_INSECURE_SKIP_VERIFY`（仅诊断用途，不建议生产开启）
+- `LINGXING_TIMEOUT_SECONDS`
+- `LINGXING_MAX_RETRIES`
+- `LINGXING_RETRY_BACKOFF_SECONDS`
+- `LINGXING_TLS_MODE`（`default` / `tls1_2`）
+- `LINGXING_PROXY_URL`
+- `LINGXING_INSECURE_SKIP_VERIFY`（仅排障）
 
-系统会自动读取项目根目录 `.env`（通过 `python-dotenv`），无需额外 `export`。
+### 8.3 Context 导出
 
-### 常见网络报错排查
+- `CONTEXT_EXPORT_MAX_WORKERS`（默认 1）
+- `CONTEXT_EXPORT_RETENTION_HOURS`（默认 24）
 
-如果出现 `Lingxing network error: ... The handshake operation timed out`：
+### 8.4 运营分析
 
-1. 先确认当前机器可访问 `https://openapi.lingxing.com`（DNS、出网、防火墙、代理）。
-2. 确认领星 OpenAPI 白名单中已添加当前出口 IP。
-3. 适当调大：
-   - `LINGXING_TIMEOUT_SECONDS=120`
-   - `LINGXING_MAX_RETRIES=5`
-   - `LINGXING_TLS_MODE=tls1_2`
-4. 若公司网络需要代理，配置系统级 `HTTPS_PROXY` / `HTTP_PROXY` 后重试。
-   或设置应用内代理：`LINGXING_PROXY_URL=http://proxy.company.com:8080`
+- `OPS_DB_PATH`（默认 `app/data/ops_data.db`）
 
-可先运行网络自检：
+### 8.5 客服 AI
+
+- `CUSTOMER_SERVICE_DATABASE_URL`
+- `CUSTOMER_SERVICE_REDIS_URL`
+- `CUSTOMER_SERVICE_LLM_PROVIDER`（`gemini` / `openai`）
+- `CUSTOMER_SERVICE_LLM_MODEL`
+- `CUSTOMER_SERVICE_MAX_REPLY_CHARS`
+- `CUSTOMER_SERVICE_SP_API_BASE_URL`
+- `CUSTOMER_SERVICE_SP_API_ACCESS_TOKEN`
+- `CUSTOMER_SERVICE_SP_API_MARKETPLACE_ID`
+- `CUSTOMER_SERVICE_SP_API_LIST_MESSAGES_PATH`
+- `CUSTOMER_SERVICE_SP_API_SEND_MESSAGE_PATH`
+- `OPENAI_API_KEY`（当 provider=openai 时）
+
+---
+
+## 9. 本地开发与部署
+
+## 9.1 本地启动
 
 ```bash
-python scripts/lingxing_network_check.py
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload
 ```
 
-## 关键 API
+访问：`http://127.0.0.1:8000`
 
-- `GET /api/stores`（默认会尝试拉取领星绑定店铺名并返回 `store_id + store_name`）
-  - 可选查询参数：`include_bound=true|false`
-- `GET /api/stores/{store_id}/performance`
-- `GET /api/stores/{store_id}/ad-group-recommendations`
-- `GET /api/stores/{store_id}/optimization-cases`
-- `POST /api/stores/{store_id}/ai/advice`
-- `POST /api/stores/{store_id}/ai/whitepaper`
-- `GET /api/stores/{store_id}/whitepaper`（获取已保存白皮书）
-- `POST /api/stores/{store_id}/whitepaper/import`（导入 `.txt/.md` 白皮书）
-- `GET /api/stores/{store_id}/whitepaper/export`（导出白皮书）
-- `POST /api/lingxing/sync`（自动同步领星广告数据+历史操作并分析）
-- `POST /api/ai/upload-analysis`（上传 Excel 并调用 Gemini 分析）
+## 9.2 Docker（公网 8080）
 
-AI 接口支持 `lang` 参数（`zh` / `en`），例如：
-
-```json
-{ "lang": "zh" }
+```bash
+cp .env.example .env
+docker compose up -d --build
 ```
 
-说明：
+- Web：`http://<公网IP>:8080`
+- 已包含服务：
+  - `amazon-ads-analyze`（FastAPI）
+  - `celery-worker`
+  - `postgres`
+  - `redis`
 
-- `POST /api/stores/{store_id}/ai/advice` 会优先读取该店铺已保存白皮书，再生成建议。
-- 若店铺白皮书不存在，会先自动生成并保存白皮书，再生成建议。
+宿主机持久化：`./app/data:/app/app/data`
 
-领星同步请求示例：
+---
+
+## 10. 脚本工具
+
+- `scripts/lingxing_network_check.py`：领星网络/TLS/代理排障
+- `scripts/lingxing_sync.py`：CLI 同步领星并输出 JSON
+- `scripts/lingxing_context_package.py`：CLI 导出 Context Package
+- `scripts/gemini_advice.py`：基于已保存白皮书生成建议（强校验 store_id）
+
+---
+
+## 11. 测试与质量
+
+当前测试：
+
+- `tests/test_context_export_jobs.py`
+- `tests/test_ops_pipeline_unittest.py`
+
+建议执行：
+
+```bash
+python -m compileall app tests
+python -m unittest -q
+```
+
+---
+
+## 12. 已知边界与风险（给项目排期用）
+
+1. 前端与后端能力不完全对齐：
+   - `/api/ops/*` 已实现，但前端按钮还未切到这套流程。
+2. 客服 AI 目前是 API 能力：
+   - 主站前端尚未有客服页面入口。
+3. Context 导出任务是“进程内任务管理”：
+   - 服务重启后任务状态会丢失（文件仍在磁盘）。
+4. 领星网络依赖外网与白名单：
+   - TLS/代理策略不通时会失败，需要网络层配合。
+5. 当前存在双数据链路：
+   - 旧链路（CSV）与新链路（SQLite）并存，后续可统一。
+
+---
+
+## 13. 建议下一步（产品/项目视角）
+
+1. 前端接入运营白皮书链路：按钮改为 `ops/sync -> ops/whitepaper -> ops/advisory`。
+2. 增加“运营白皮书/周期建议”可视化页面（结构化 JSON 卡片化，而非纯文本）。
+3. 客服 AI 增加前端工作台（消息列表、编辑、审批、发送）。
+4. 将 Context 异步任务迁移到 Redis/Celery，提升重启恢复能力。
+5. 统一数据读取层，逐步从 CSV 迁移到 SQLite。
+
+---
+
+## 13. 用户与权限（新增）
+
+本版本新增完整的多租户用户与店铺授权能力（FastAPI + PostgreSQL + JWT + bcrypt + Alembic）：
+
+- 用户认证：注册、登录、JWT
+- RBAC：`admin` / `manager` / `staff` / `viewer`
+- 店铺授权：用户仅可访问授权店铺数据
+- 多租户：核心表均带 `tenant_id`
+- 客服消息：仅 `staff/manager/admin` 可访问，且按店铺授权隔离
+
+### 13.1 新增核心表
+
+- `tenants`
+- `roles`
+- `users`
+- `stores`
+- `user_store_mapping`
+- `buyer_messages`
+
+### 13.2 迁移
+
+```bash
+alembic upgrade head
+```
+
+### 13.3 启动
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8080
+```
+
+启动后会自动：
+
+- 初始化 RBAC 表结构
+- 初始化默认租户与默认管理员（由 `.env` 中 `BOOTSTRAP_*` 控制）
+- 同步本地店铺目录到授权表
+
+### 13.4 认证 API 示例
+
+1. 登录获取 JWT
+
+```bash
+curl -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"account":"admin","password":"ChangeThisPassword123!"}'
+```
+
+2. 创建用户
+
+```bash
+curl -X POST http://localhost:8080/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username":"staff1","email":"staff1@example.com","password":"StrongPass123!","tenant_id":1,"role":"staff"}'
+```
+
+3. 给用户授权店铺
+
+```bash
+curl -X POST http://localhost:8080/api/auth/users/2/stores \
+  -H "Authorization: Bearer <JWT>" \
+  -H "Content-Type: application/json" \
+  -d '{"external_store_id":"store_a","store_name":"Store A"}'
+```
+
+4. 查询当前用户可见店铺
+
+```bash
+curl http://localhost:8080/api/auth/stores/me \
+  -H "Authorization: Bearer <JWT>"
+```
+
+### 13.5 AI 客服 API（按店铺授权）
+
+- 拉取消息：`POST /api/customer-service/stores/{store_id}/messages/fetch`
+- 列表：`GET /api/customer-service/stores/{store_id}/messages`
+- 生成回复：`POST /api/customer-service/stores/{store_id}/messages/{message_id}/generate`
+- 编辑回复：`PATCH /api/customer-service/stores/{store_id}/messages/{message_id}/reply`
+- 审批：`POST /api/customer-service/stores/{store_id}/messages/{message_id}/approve`
+- 发送：`POST /api/customer-service/stores/{store_id}/messages/{message_id}/send`
+- 审批并发送：`POST /api/customer-service/stores/{store_id}/messages/{message_id}/approve-send`
+
+生成回复返回结构示例：
 
 ```json
 {
-  "store_id": "lingxing_123456",
-  "start_date": "2026-03-01",
-  "end_date": "2026-03-07",
-  "persist": true
+  "category": "damage",
+  "sentiment": "negative",
+  "risk_level": "high",
+  "product_issue": "broken leg",
+  "reply": "Hello, we sincerely apologize..."
 }
-```
-
-或单日报告：
-
-```json
-{
-  "store_id": "lingxing_123456",
-  "report_date": "2026-03-08",
-  "persist": true
-}
-```
-
-说明：
-
-- `persist=true` 时会把同步结果落盘到 `app/data/performance/*.csv` 和 `app/data/history/*.csv`
-- 并自动生成缺失的 `store_playbook_{id}.json`
-- API 会直接返回每个店铺的最新表现、优化案例和 bid 建议
-
-上传分析接口说明（`multipart/form-data`）：
-
-- `file`: `.xlsx` / `.xls`
-- `store_id`: 可选，默认 `uploaded_store`
-- `lang`: `zh` / `en`
-- `model`: Gemini 模型名（不传时使用 `GEMINI_MODEL`，默认 `gemini-2.5-flash`）
-- `rules`: 可选，JSON 字符串或纯文本规则
-
-工作簿要求：
-
-- Sheet A（广告日数据）：至少含 `日期`、`点击`、`花费`、`广告销售额`（`ACoS` 可选）
-- Sheet B（操作历史）：至少含 `操作时间`、`操作前的数据`、`操作后的数据`（会自动提取“竞价”变更）
-
-## 独立 Gemini 脚本
-
-```bash
-export GEMINI_API_KEY="your_key_here"
-python scripts/gemini_advice.py --store-id store_a
-# 指定日期
-python scripts/gemini_advice.py --store-id store_a --date 2026-03-05
-# 指定英文输出
-python scripts/gemini_advice.py --store-id store_a --lang en
-```
-
-该脚本会在调用 Gemini 前验证 `metrics.store_id == playbook.store_id`，防止租户数据泄露。
-
-## 独立领星同步脚本
-
-```bash
-# 最近 14 天（默认），并落盘
-python scripts/lingxing_sync.py
-
-# 指定日期区间
-python scripts/lingxing_sync.py --start-date 2026-03-01 --end-date 2026-03-07
-
-# 仅查看分析结果，不落盘
-python scripts/lingxing_sync.py --report-date 2026-03-08 --no-persist
 ```
