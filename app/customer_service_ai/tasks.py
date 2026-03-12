@@ -4,8 +4,9 @@ from typing import Any
 
 from app.auth.models import Store
 
+from .analysis_context import build_message_analysis_text
 from .auto_reply_engine import AutoReplyEngine
-from .db import SessionLocal, init_customer_service_schema
+from .db import MessageStatus, SessionLocal, init_customer_service_schema
 from .human_review import HumanReviewEngine
 from .llm import CustomerServiceLLM
 from .message_classification import MessageClassificationService
@@ -16,8 +17,8 @@ from .queue import celery_app
 from .reply_generation import ReplyGenerationService
 from .risk_detection import ProductIssueExtractionService, RiskDetectionService
 from .sentiment_analysis import SentimentAnalysisService
-from .service import fetch_and_store_messages, process_message_pipeline, send_approved_reply
-from .sp_api import LingxingMessagingClient
+from .service import fetch_and_store_messages, get_message, process_message_pipeline, send_approved_reply
+from .sp_api import LingxingMessagingClient, MessagingAPIError
 
 
 @celery_app.task(name="customer_service.fetch_buyer_messages")
@@ -91,6 +92,22 @@ def process_message_task(
         if store is None:
             raise RuntimeError(f"Store {store_id} not found")
         target_store = client.resolve_store(external_store_id=store.external_store_id)
+        scoped_message = get_message(
+            db,
+            message_id=message_id,
+            tenant_id=tenant_id,
+            store_id=store_id,
+        )
+        analysis_text: str | None = None
+        if scoped_message.status not in {MessageStatus.SENT.value, MessageStatus.AUTO_SENT.value}:
+            try:
+                analysis_text = build_message_analysis_text(
+                    message=scoped_message,
+                    client=client,
+                    target_store=target_store,
+                )
+            except MessagingAPIError:
+                analysis_text = None
         result = process_message_pipeline(
             db=db,
             message_id=message_id,
@@ -111,6 +128,7 @@ def process_message_task(
             ),
             force_regenerate=force_regenerate,
             allow_auto_send=allow_auto_send,
+            analysis_text=analysis_text,
         )
 
         return {

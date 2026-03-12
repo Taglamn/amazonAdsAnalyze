@@ -8,6 +8,7 @@ from app.auth.database import get_db_session
 from app.auth.dependencies import enforce_store_access, require_roles
 from app.auth.models import RoleName, User
 
+from .analysis_context import build_message_analysis_text
 from .auto_reply_engine import AutoReplyEngine
 from .db import MessageStatus
 from .human_review import HumanReviewEngine
@@ -174,6 +175,21 @@ def fetch_messages(
 
         if auto_process:
             for message_id in result.new_message_ids:
+                message = get_message(
+                    db,
+                    message_id=message_id,
+                    tenant_id=current_user.tenant_id,
+                    store_id=internal_store_id,
+                )
+                analysis_text: str | None = None
+                try:
+                    analysis_text = build_message_analysis_text(
+                        message=message,
+                        client=client,
+                        target_store=target_store,
+                    )
+                except MessagingAPIError:
+                    analysis_text = None
                 process_message_pipeline(
                     db=db,
                     message_id=message_id,
@@ -194,6 +210,7 @@ def fetch_messages(
                     ),
                     force_regenerate=False,
                     allow_auto_send=True,
+                    analysis_text=analysis_text,
                 )
                 processed_count += 1
 
@@ -321,6 +338,21 @@ def process_message(
     try:
         client = _build_message_client()
         target_store = client.resolve_store(external_store_id=external_store_id)
+        scoped_message = get_message(
+            db,
+            message_id=message_id,
+            tenant_id=current_user.tenant_id,
+            store_id=internal_store_id,
+        )
+        analysis_text: str | None = None
+        try:
+            analysis_text = build_message_analysis_text(
+                message=scoped_message,
+                client=client,
+                target_store=target_store,
+            )
+        except MessagingAPIError:
+            analysis_text = None
         result = process_message_pipeline(
             db=db,
             message_id=message_id,
@@ -341,6 +373,7 @@ def process_message(
             ),
             force_regenerate=payload.force_regenerate,
             allow_auto_send=payload.allow_auto_send,
+            analysis_text=analysis_text,
         )
     except MessagingAPIError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

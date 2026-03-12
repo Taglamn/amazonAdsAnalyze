@@ -19,6 +19,7 @@ class MessagingAPIError(RuntimeError):
 class IncomingBuyerMessage:
     conversation_id: str
     buyer_message: str
+    mailbox_flag: str = "receive"
 
 
 @dataclass(frozen=True)
@@ -157,7 +158,7 @@ class LingxingMessagingClient:
             query=query,
             body=body,
         )
-        return self._extract_messages(resp)
+        return self._extract_messages(resp, mailbox_flag=self.settings.lingxing_list_messages_flag_value)
 
     def fetch_message_detail(
         self,
@@ -411,11 +412,11 @@ class LingxingMessagingClient:
                 return candidate_text
         return ""
 
-    def _extract_messages(self, payload: dict[str, Any]) -> list[IncomingBuyerMessage]:
+    def _extract_messages(self, payload: dict[str, Any], *, mailbox_flag: str = "receive") -> list[IncomingBuyerMessage]:
         seen: set[tuple[str, str]] = set()
         normalized: list[IncomingBuyerMessage] = []
 
-        def add_message(node: dict[str, Any], fallback_cid: str = "") -> None:
+        def add_message(node: dict[str, Any], fallback_cid: str = "", fallback_box: str = "receive") -> None:
             text = self._extract_message_text(node)
             if not text:
                 return
@@ -430,38 +431,68 @@ class LingxingMessagingClient:
             if key in seen:
                 return
             seen.add(key)
-            normalized.append(IncomingBuyerMessage(conversation_id=cid, buyer_message=text))
+            resolved_box = self._extract_mailbox_flag(node) or fallback_box or mailbox_flag
+            normalized.append(
+                IncomingBuyerMessage(
+                    conversation_id=cid,
+                    buyer_message=text,
+                    mailbox_flag=str(resolved_box or "receive").strip().lower() or "receive",
+                )
+            )
 
-        def walk(node: Any, fallback_cid: str = "") -> None:
+        def walk(node: Any, fallback_cid: str = "", fallback_box: str = "receive") -> None:
             if isinstance(node, dict):
                 cid = self._extract_conversation_id(node) or fallback_cid
+                resolved_box = self._extract_mailbox_flag(node) or fallback_box
 
                 messages = node.get("messages")
                 if isinstance(messages, list):
                     for item in messages:
                         if isinstance(item, dict):
-                            add_message(item, fallback_cid=cid)
+                            add_message(item, fallback_cid=cid, fallback_box=resolved_box)
 
                 if self._extract_message_text(node):
-                    add_message(node, fallback_cid=fallback_cid)
+                    add_message(node, fallback_cid=fallback_cid, fallback_box=resolved_box)
 
                 for key in ("data", "payload", "result", "list", "items", "rows", "conversations"):
                     child = node.get(key)
                     if child is not None:
-                        walk(child, fallback_cid=cid)
+                        walk(child, fallback_cid=cid, fallback_box=resolved_box)
             elif isinstance(node, list):
                 for item in node:
-                    walk(item, fallback_cid=fallback_cid)
+                    walk(item, fallback_cid=fallback_cid, fallback_box=fallback_box)
             elif isinstance(node, str):
                 stripped = node.strip()
                 if stripped.startswith("{") or stripped.startswith("["):
                     try:
-                        walk(json.loads(stripped), fallback_cid=fallback_cid)
+                        walk(json.loads(stripped), fallback_cid=fallback_cid, fallback_box=fallback_box)
                     except json.JSONDecodeError:
                         return
 
-        walk(payload)
+        walk(payload, fallback_box=mailbox_flag)
         return normalized
+
+    @staticmethod
+    def _extract_mailbox_flag(payload: dict[str, Any]) -> str:
+        for key in (
+            "flag",
+            "mail_flag",
+            "mailbox_flag",
+            "folder",
+            "box",
+            "direction",
+            "type",
+            "mail_type",
+        ):
+            raw = payload.get(key)
+            if raw is None:
+                continue
+            value = str(raw).strip().lower()
+            if value in {"sent", "send", "outbox", "outgoing"}:
+                return "sent"
+            if value in {"receive", "received", "inbox", "incoming"}:
+                return "receive"
+        return ""
 
     @staticmethod
     def _extract_conversation_id(payload: dict[str, Any]) -> str:

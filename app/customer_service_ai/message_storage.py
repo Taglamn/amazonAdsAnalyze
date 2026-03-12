@@ -40,7 +40,8 @@ class MessageStorageService:
             )
             if is_created:
                 created_count += 1
-                new_message_ids.append(message.id)
+                if message.status == MessageStatus.NEW.value:
+                    new_message_ids.append(message.id)
 
         return StoreMessagesResult(
             fetched_count=len(incoming),
@@ -81,7 +82,11 @@ class MessageStorageService:
             product_issue=None,
             ai_reply=None,
             final_reply=None,
-            status=MessageStatus.NEW.value,
+            status=(
+                MessageStatus.SENT.value
+                if (incoming.mailbox_flag or "").strip().lower() == "sent"
+                else MessageStatus.NEW.value
+            ),
         )
         db.add(message)
         db.commit()

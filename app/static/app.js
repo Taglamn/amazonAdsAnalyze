@@ -2050,8 +2050,8 @@ function App() {
   }
 
   return html`
-    <div className="min-h-screen md:flex">
-      <aside className="w-full border-b border-brand-100 bg-brand-900 text-brand-50 md:w-64 md:border-b-0 md:border-r">
+    <div className="min-h-screen overflow-x-hidden md:flex">
+      <aside className="w-full shrink-0 border-b border-brand-100 bg-brand-900 text-brand-50 md:w-64 md:flex-none md:border-b-0 md:border-r">
         <div className="px-5 py-6">
           <h1 className="text-lg font-semibold">${t.appTitle}</h1>
           <p className="mt-1 text-xs text-brand-200">${t.appSubtitle}</p>
@@ -2110,7 +2110,7 @@ function App() {
         </nav>
       </aside>
 
-      <main className="flex-1 p-4 md:p-8">
+      <main className="min-w-0 flex-1 p-4 md:p-8">
         <header className="mb-6 flex flex-col gap-3 rounded-xl border border-brand-100 bg-white p-4 shadow-sm md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-xl font-semibold">${t.nav[view]}</h2>
@@ -2393,7 +2393,7 @@ function App() {
                     : null}
                 </div>
 
-                <div className="overflow-x-auto rounded-xl border border-brand-100 bg-white shadow-sm">
+                <div className="max-w-full overflow-x-auto rounded-xl border border-brand-100 bg-white shadow-sm">
                   <table className="min-w-[1100px] divide-y divide-brand-100 text-sm">
                     <thead className="bg-brand-50">
                       <tr>
@@ -2424,6 +2424,13 @@ function App() {
                                 <tr key=${`row_${row.id}`} className="align-top hover:bg-brand-50/70">
                                   <td className="px-3 py-3">
                                     <div className="whitespace-pre-wrap break-words text-brand-900">${row.buyer_message || '-'}</div>
+                                    <button
+                                      onClick=${() => onToggleMessageDetail(row)}
+                                      disabled=${Boolean(detailLoading)}
+                                      className="mt-2 rounded-md border border-brand-300 bg-white px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50 disabled:cursor-not-allowed disabled:border-brand-100 disabled:bg-brand-50 disabled:text-brand-300"
+                                    >
+                                      ${detailOpened ? t.autoReply.collapseBtn : t.autoReply.expandBtn}
+                                    </button>
                                   </td>
                                   <td className="px-3 py-3">
                                     <div className="whitespace-pre-wrap break-words text-brand-700">${row.ai_reply || '-'}</div>
@@ -2445,13 +2452,6 @@ function App() {
                                   <td className="px-3 py-3 text-brand-600">${formatDateTime(row.created_at)}</td>
                                   <td className="px-3 py-3">
                                     <div className="flex flex-wrap gap-2">
-                                      <button
-                                        onClick=${() => onToggleMessageDetail(row)}
-                                        disabled=${Boolean(detailLoading)}
-                                        className="rounded-md border border-brand-300 bg-white px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50"
-                                      >
-                                        ${detailOpened ? t.autoReply.collapseBtn : t.autoReply.expandBtn}
-                                      </button>
                                       <button
                                         onClick=${() => onProcessMessage(row.id)}
                                         disabled=${Boolean(mailLoading)}
@@ -2492,14 +2492,16 @@ function App() {
                                         ${detailLoading
                                           ? html`<p className="text-sm text-brand-600">${t.autoReply.detailLoading}</p>`
                                           : html`
-                                              <div className="space-y-2 text-sm text-brand-800">
-                                                <p><strong>Subject:</strong> ${detail?.subject || '-'}</p>
-                                                <p><strong>From:</strong> ${detail?.from_address || '-'}</p>
-                                                <p><strong>Date:</strong> ${detail?.date || '-'}</p>
-                                                <p><strong>Attachments:</strong> ${attachmentNames || '-'}</p>
-                                                <pre className="whitespace-pre-wrap break-words rounded-md bg-white p-3 text-xs leading-6 text-brand-800">
+                                              <div className="max-w-full overflow-x-auto">
+                                                <div className="space-y-2 text-sm text-brand-800">
+                                                  <p><strong>Subject:</strong> ${detail?.subject || '-'}</p>
+                                                  <p><strong>From:</strong> ${detail?.from_address || '-'}</p>
+                                                  <p><strong>Date:</strong> ${detail?.date || '-'}</p>
+                                                  <p><strong>Attachments:</strong> ${attachmentNames || '-'}</p>
+                                                  <pre className="max-w-full overflow-x-auto whitespace-pre-wrap break-all rounded-md bg-white p-3 text-xs leading-6 text-brand-800">
 ${detailText || '-'}
-                                                </pre>
+                                                  </pre>
+                                                </div>
                                               </div>
                                             `}
                                       </td>

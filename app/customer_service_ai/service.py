@@ -125,6 +125,7 @@ def process_message_pipeline(
     send_service: MessageSendService,
     force_regenerate: bool = False,
     allow_auto_send: bool = True,
+    analysis_text: str | None = None,
 ) -> ProcessResult:
     """Run AI analysis/reply pipeline and optionally auto-send."""
 
@@ -150,7 +151,7 @@ def process_message_pipeline(
             sp_api_result=None,
         )
 
-    buyer_text = message.buyer_message
+    buyer_text = (analysis_text or message.buyer_message or "").strip() or message.buyer_message
 
     classification = classification_service.classify(llm=llm, buyer_message=buyer_text)
     sentiment = sentiment_service.analyze(llm=llm, buyer_message=buyer_text)
