@@ -13,6 +13,7 @@ DATA_DIR = BASE_DIR / "data"
 PERFORMANCE_DIR = DATA_DIR / "performance"
 HISTORY_DIR = DATA_DIR / "history"
 PLAYBOOK_DIR = DATA_DIR / "playbooks"
+LEGACY_SAMPLE_STORE_IDS = {"store_a", "store_b"}
 
 
 @dataclass
@@ -29,7 +30,11 @@ class StoreRepository:
         self._cache: Dict[str, Store] = {}
 
     def list_store_ids(self) -> List[str]:
-        return sorted(path.stem for path in PERFORMANCE_DIR.glob("*.csv"))
+        return sorted(
+            store_id
+            for store_id in (path.stem for path in PERFORMANCE_DIR.glob("*.csv"))
+            if store_id not in LEGACY_SAMPLE_STORE_IDS
+        )
 
     def list_stores(self) -> List[Dict[str, str]]:
         return [
