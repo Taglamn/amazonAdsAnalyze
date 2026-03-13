@@ -194,6 +194,39 @@ class LingxingSyncJobManagerTests(unittest.TestCase):
             self.assertEqual(stale_status["status"], "failed")
             self.assertIn("stale", stale_status["message"].lower())
 
+    def test_heartbeat_keeps_long_job_alive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manager = LingxingSyncJobManager(
+                output_dir=Path(tmp_dir),
+                max_workers=1,
+                retention_seconds=3600,
+                stale_seconds=2,
+                heartbeat_seconds=1,
+            )
+
+            def sync_func(**kwargs: Any) -> Dict[str, Any]:
+                time.sleep(3)
+                return {"target_store_id": kwargs["store_id"], "stores": []}
+
+            created = manager.create_job(
+                store_id="lingxing_700",
+                report_date=None,
+                start_date=None,
+                end_date=None,
+                persist=True,
+                sync_func=sync_func,
+            )
+
+            time.sleep(2.2)
+            mid_status = manager.get_job(created["job_id"])
+            self.assertIsNotNone(mid_status)
+            assert mid_status is not None
+            self.assertEqual(mid_status["status"], "running")
+            self.assertFalse(bool(mid_status.get("is_stale")))
+
+            final_status = self._wait_terminal(manager, created["job_id"], timeout_seconds=8.0)
+            self.assertEqual(final_status["status"], "succeeded")
+
 
 if __name__ == "__main__":
     unittest.main()

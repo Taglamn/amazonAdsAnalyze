@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -50,12 +51,14 @@ class LingxingSyncJobManager:
         max_workers: int = 1,
         retention_seconds: int = 86400,
         stale_seconds: int = 2700,
+        heartbeat_seconds: int = 30,
     ) -> None:
         self._output_dir = output_dir or (DATA_DIR / "lingxing_sync_jobs")
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="lingxing-sync")
         self._retention_seconds = max(3600, retention_seconds)
         self._stale_seconds = max(300, int(stale_seconds))
+        self._heartbeat_seconds = max(5, int(heartbeat_seconds))
         self._lock = threading.Lock()
         self._jobs: Dict[str, LingxingSyncJob] = {}
         self._load_jobs_from_disk()
@@ -191,6 +194,16 @@ class LingxingSyncJobManager:
         self._persist_job_locked(job)
         return True
 
+    def _touch_job(self, job_id: str) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job:
+                return
+            if job.status != "running":
+                return
+            job.updated_at = _utc_now()
+            self._persist_job_locked(job)
+
     def _update_job(
         self,
         job_id: str,
@@ -296,6 +309,19 @@ class LingxingSyncJobManager:
             message="Starting Lingxing sync",
         )
 
+        heartbeat_stop = threading.Event()
+
+        def heartbeat_loop() -> None:
+            while not heartbeat_stop.wait(self._heartbeat_seconds):
+                self._touch_job(job_id)
+
+        heartbeat_thread = threading.Thread(
+            target=heartbeat_loop,
+            name=f"lingxing-sync-heartbeat-{job_id[:8]}",
+            daemon=True,
+        )
+        heartbeat_thread.start()
+
         def progress_cb(stage: str, pct: int, msg: str) -> None:
             self._update_job(
                 job_id,
@@ -331,6 +357,8 @@ class LingxingSyncJobManager:
                 stage="failed",
                 message=str(exc),
             )
+        finally:
+            heartbeat_stop.set()
 
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -367,4 +395,7 @@ lingxing_sync_job_manager = LingxingSyncJobManager(
         "LINGXING_SYNC_STALE_MINUTES", default=45, minimum=5, maximum=1440
     )
     * 60,
+    heartbeat_seconds=_read_env_int(
+        "LINGXING_SYNC_HEARTBEAT_SECONDS", default=30, minimum=5, maximum=600
+    ),
 )
