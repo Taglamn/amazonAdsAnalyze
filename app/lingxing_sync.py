@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Callable, Dict, List, Set, Tuple
 
 import pandas as pd
 
@@ -965,13 +965,26 @@ def sync_lingxing_data(
     start_date: str | None = None,
     end_date: str | None = None,
     persist: bool = True,
+    progress_cb: Callable[[str, int, str], None] | None = None,
 ) -> Dict[str, Any]:
+    def report(stage: str, pct: int, msg: str) -> None:
+        if not progress_cb:
+            return
+        try:
+            progress_cb(stage, pct, msg)
+        except Exception:
+            # Keep sync pipeline resilient even if progress callback fails.
+            return
+
+    report("starting", 8, "Preparing sync window")
     window = resolve_sync_window(report_date=report_date, start_date=start_date, end_date=end_date)
 
     credentials = LingxingCredentials.from_env()
     client = LingxingClient(credentials=credentials)
 
+    report("auth", 12, "Authenticating Lingxing API")
     access_token = client.generate_access_token()
+    report("loading_stores", 16, "Loading bound stores")
     sellers = client.list_sellers(access_token=access_token)
 
     valid_sellers = [
@@ -998,10 +1011,13 @@ def sync_lingxing_data(
 
     store_results: List[Dict[str, Any]] = []
 
-    for seller in valid_sellers:
+    sellers_total = max(1, len(valid_sellers))
+    for seller_idx, seller in enumerate(valid_sellers):
         sid = int(seller["sid"])
         store_id = f"lingxing_{sid}"
         store_name = str(seller.get("name") or store_id)
+        seller_prefix = f"[{seller_idx + 1}/{sellers_total}] {store_name}"
+        report("preparing_store", 20, f"{seller_prefix} loading campaign and bid baseline")
         campaign_name_map = client.fetch_campaign_names(access_token=access_token, sid=sid)
         bid_snapshots = client.fetch_bid_snapshots(access_token=access_token, sid=sid)
         requested_days = [day.isoformat() for day in _date_iter(window.start_date, window.end_date)]
@@ -1019,6 +1035,29 @@ def sync_lingxing_data(
         missing_negative_days = _missing_days(requested_days, negative_covered)
         missing_ads_days = _missing_days(requested_days, ads_covered)
         missing_change_days = _missing_days(requested_days, change_covered)
+        change_ranges = _build_missing_date_ranges(missing_change_days, max_span_days=30)
+
+        total_fetch_units = (
+            len(missing_ad_days)
+            + len(missing_targeting_days)
+            + len(missing_negative_days)
+            + len(missing_ads_days)
+            + len(change_ranges)
+        )
+        completed_units = 0
+
+        def report_fetch_progress(stage: str, label: str) -> None:
+            nonlocal completed_units
+            completed_units += 1
+            if total_fetch_units <= 0:
+                report(stage, 72, f"{seller_prefix} local cache hit, skipping remote fetch")
+                return
+            pct = 22 + int((50 * completed_units) / total_fetch_units)
+            report(
+                stage,
+                min(72, pct),
+                f"{seller_prefix} {label} {completed_units}/{total_fetch_units}",
+            )
 
         new_ad_group_rows: List[Dict[str, Any]] = []
         new_targeting_rows: List[Dict[str, Any]] = []
@@ -1038,6 +1077,7 @@ def sync_lingxing_data(
                         campaign_name_map=campaign_name_map,
                     )
                 )
+                report_fetch_progress("fetching_ad_group_reports", "ad-group reports")
 
             if day_text in missing_targeting_days:
                 targeting_raw_rows = client.fetch_targeting_reports_for_day(
@@ -1052,6 +1092,7 @@ def sync_lingxing_data(
                         campaign_name_map=campaign_name_map,
                     )
                 )
+                report_fetch_progress("fetching_targeting_reports", "targeting reports")
 
             if day_text in missing_negative_days:
                 negative_raw_rows = client.fetch_negative_targeting_reports_for_day(
@@ -1065,6 +1106,10 @@ def sync_lingxing_data(
                         fallback_day=day_text,
                         campaign_name_map=campaign_name_map,
                     )
+                )
+                report_fetch_progress(
+                    "fetching_negative_targeting_reports",
+                    "negative targeting reports",
                 )
 
             if day_text in missing_ads_days:
@@ -1080,10 +1125,11 @@ def sync_lingxing_data(
                         campaign_name_map=campaign_name_map,
                     )
                 )
+                report_fetch_progress("fetching_ads_reports", "ads reports")
 
         op_logs: List[Dict[str, Any]] = []
         new_full_change_records: List[Dict[str, Any]] = []
-        for chunk_start, chunk_end in _build_missing_date_ranges(missing_change_days, max_span_days=30):
+        for chunk_start, chunk_end in change_ranges:
             chunk_logs = client.fetch_operation_logs(
                 access_token=access_token,
                 sid=sid,
@@ -1097,7 +1143,12 @@ def sync_lingxing_data(
                     op_logs=chunk_logs,
                 )
             )
+            report_fetch_progress("fetching_change_logs", "operation logs")
 
+        if total_fetch_units <= 0:
+            report("using_local_cache", 72, f"{seller_prefix} no missing days, using local cache")
+
+        report("merging_local_cache", 76, f"{seller_prefix} merging data into local cache")
         local_dataset["store_name"] = store_name
         local_dataset["ad_group_reports_by_day_ad_group"] = _upsert_rows_by_key(
             existing_rows=list(local_dataset.get("ad_group_reports_by_day_ad_group", [])),
@@ -1143,8 +1194,10 @@ def sync_lingxing_data(
         )
 
         if persist:
+            report("persisting_local_cache", 80, f"{seller_prefix} writing local cache")
             _save_local_dataset(local_dataset)
 
+        report("building_analysis_view", 84, f"{seller_prefix} building analysis frames")
         ad_group_rows_window = _filter_rows_by_window(
             list(local_dataset.get("ad_group_reports_by_day_ad_group", [])),
             start_day=window.start_date,
@@ -1193,6 +1246,7 @@ def sync_lingxing_data(
         perf_df["date"] = pd.to_datetime(perf_df["date"]).dt.date
         history_df["date"] = pd.to_datetime(history_df["date"]).dt.date
 
+        report("generating_recommendations", 89, f"{seller_prefix} generating recommendations")
         cases = build_optimization_cases(
             store_id=store_id,
             history_df=history_df,
@@ -1225,6 +1279,7 @@ def sync_lingxing_data(
 
         full_dataset_path = ""
         if persist:
+            report("writing_output_files", 93, f"{seller_prefix} writing output files")
             _persist_store_frames(store_id=store_id, perf_df=perf_df, history_df=history_df)
             _ensure_default_playbook(store_id=store_id, store_name=store_name)
             full_dataset_path = _persist_full_dataset_payload(
@@ -1274,6 +1329,7 @@ def sync_lingxing_data(
             }
         )
 
+    report("finalizing", 98, "Sync result assembled")
     return {
         "target_store_id": target_store_id or None,
         "window": {

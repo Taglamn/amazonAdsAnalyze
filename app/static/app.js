@@ -180,6 +180,8 @@ const I18N = {
       syncJobFailed: 'Lingxing sync failed.',
       syncJobProgress: 'Progress',
       syncJobStage: 'Stage',
+      syncJobUpdatedAt: 'Last Update',
+      syncJobNetworkRetry: 'Network unstable while polling. Task is still running on server; retrying...',
       contextStoreHint: 'Context Package supports Lingxing stores only (store_id should start with lingxing_).',
       contextJobLabel: 'Context Package Export Task',
       contextJobIdle: 'No context export task is running.',
@@ -358,6 +360,8 @@ const I18N = {
       syncJobFailed: '领星同步失败。',
       syncJobProgress: '进度',
       syncJobStage: '阶段',
+      syncJobUpdatedAt: '最后更新时间',
+      syncJobNetworkRetry: '轮询网络异常，任务仍在服务器后台运行，正在重试...',
       contextStoreHint: 'Context Package 仅支持领星店铺（store_id 需以 lingxing_ 开头）。',
       contextJobLabel: 'Context Package 导出任务',
       contextJobIdle: '当前没有进行中的导出任务。',
@@ -1022,15 +1026,40 @@ function App() {
     const pollNonce = syncPollNonceRef.current + 1;
     syncPollNonceRef.current = pollNonce;
     syncPollingJobIdRef.current = jobId;
+    let pollErrors = 0;
 
     try {
       while (true) {
         await sleep(2000);
         if (syncPollNonceRef.current !== pollNonce) return;
 
-        const statusResp = await fetchJson(`/api/lingxing/sync/jobs/${jobId}`, undefined, t.requestFailed);
+        let statusResp = null;
+        try {
+          statusResp = await fetchJson(`/api/lingxing/sync/jobs/${jobId}`, undefined, t.requestFailed);
+          pollErrors = 0;
+        } catch (err) {
+          pollErrors += 1;
+          if (syncPollNonceRef.current !== pollNonce) return;
+
+          setSyncJobStatus((prev) => ({
+            ...(prev || {}),
+            status: 'running',
+            stage: 'polling',
+            message: `${t.playbook.syncJobNetworkRetry} (${pollErrors})`,
+          }));
+
+          if (pollErrors >= 60) {
+            throw err;
+          }
+          continue;
+        }
+
         if (syncPollNonceRef.current !== pollNonce) return;
         setSyncJobStatus(statusResp);
+
+        if (statusResp.is_stale) {
+          throw new Error(statusResp.message || t.playbook.syncJobFailed);
+        }
 
         if (statusResp.status === 'failed') {
           throw new Error(statusResp.message || t.playbook.syncJobFailed);
@@ -1786,12 +1815,22 @@ function App() {
       await pollLingxingSyncJob(jobId, selectedStore);
     } catch (err) {
       const message = err?.message || t.playbook.syncJobFailed;
+      const looksLikeNetworkIssue = String(message).toLowerCase().includes('failed to fetch');
       setError(message);
-      setSyncJobStatus((prev) => ({
-        ...(prev || {}),
-        status: 'failed',
-        message,
-      }));
+      if (looksLikeNetworkIssue) {
+        setSyncJobStatus((prev) => ({
+          ...(prev || {}),
+          status: 'running',
+          stage: 'polling',
+          message: t.playbook.syncJobNetworkRetry,
+        }));
+      } else {
+        setSyncJobStatus((prev) => ({
+          ...(prev || {}),
+          status: 'failed',
+          message,
+        }));
+      }
     } finally {
       setLoading(false);
     }
@@ -2362,7 +2401,9 @@ function App() {
                   <h4 className="text-sm font-semibold">${t.playbook.syncSummaryLabel}</h4>
                   <p className="mt-2 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">
                     ${syncJobStatus
-                      ? `${t.playbook.syncJobProgress}: ${syncJobStatus.progress_pct ?? 0}% | ${t.playbook.syncJobStage}: ${syncJobStatus.stage || '-'} | ${
+                      ? `${t.playbook.syncJobProgress}: ${syncJobStatus.progress_pct ?? 0}% | ${t.playbook.syncJobStage}: ${syncJobStatus.stage || '-'} | ${t.playbook.syncJobUpdatedAt}: ${
+                          syncJobStatus.updated_at ? new Date(syncJobStatus.updated_at).toLocaleString() : '-'
+                        } | ${
                           syncJobStatus.status === 'failed'
                             ? (syncJobStatus.message || t.playbook.syncJobFailed)
                             : syncJobStatus.status === 'succeeded'

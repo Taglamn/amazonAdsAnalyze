@@ -49,11 +49,13 @@ class LingxingSyncJobManager:
         output_dir: Optional[Path] = None,
         max_workers: int = 1,
         retention_seconds: int = 86400,
+        stale_seconds: int = 2700,
     ) -> None:
         self._output_dir = output_dir or (DATA_DIR / "lingxing_sync_jobs")
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="lingxing-sync")
         self._retention_seconds = max(3600, retention_seconds)
+        self._stale_seconds = max(300, int(stale_seconds))
         self._lock = threading.Lock()
         self._jobs: Dict[str, LingxingSyncJob] = {}
         self._load_jobs_from_disk()
@@ -151,6 +153,8 @@ class LingxingSyncJobManager:
             self._jobs = loaded
 
     def _to_public_payload(self, job: LingxingSyncJob) -> Dict[str, Any]:
+        age_seconds = max(0, int((_utc_now() - job.updated_at).total_seconds()))
+        is_stale = bool(job.status in {"queued", "running"} and age_seconds > self._stale_seconds)
         payload: Dict[str, Any] = {
             "job_id": job.job_id,
             "store_id": job.store_id,
@@ -160,11 +164,32 @@ class LingxingSyncJobManager:
             "message": job.message,
             "created_at": job.created_at.isoformat(),
             "updated_at": job.updated_at.isoformat(),
+            "age_seconds": age_seconds,
+            "is_stale": is_stale,
+            "stale_after_seconds": self._stale_seconds,
             "result_ready": bool(job.status == "succeeded" and isinstance(job.result, dict)),
         }
         if job.status == "succeeded" and isinstance(job.result, dict):
             payload["result"] = job.result
         return payload
+
+    def _mark_stale_job_locked(self, job: LingxingSyncJob) -> bool:
+        if job.status not in {"queued", "running"}:
+            return False
+        age_seconds = int((_utc_now() - job.updated_at).total_seconds())
+        if age_seconds <= self._stale_seconds:
+            return False
+
+        job.status = "failed"
+        job.progress_pct = 100
+        job.stage = "failed"
+        job.message = (
+            f"Task heartbeat stale for {age_seconds}s. "
+            "Marked as failed; please retry sync."
+        )
+        job.updated_at = _utc_now()
+        self._persist_job_locked(job)
+        return True
 
     def _update_job(
         self,
@@ -271,20 +296,24 @@ class LingxingSyncJobManager:
             message="Starting Lingxing sync",
         )
 
-        try:
+        def progress_cb(stage: str, pct: int, msg: str) -> None:
             self._update_job(
                 job_id,
                 status="running",
-                progress_pct=25,
-                stage="syncing",
-                message="Syncing Lingxing data",
+                progress_pct=pct,
+                stage=stage,
+                message=msg,
             )
+
+        try:
+            progress_cb("syncing", 25, "Syncing Lingxing data")
             result = sync_func(
                 store_id=store_id,
                 report_date=report_date,
                 start_date=start_date,
                 end_date=end_date,
                 persist=persist,
+                progress_cb=progress_cb,
             )
             self._update_job(
                 job_id,
@@ -308,6 +337,7 @@ class LingxingSyncJobManager:
             job = self._jobs.get(job_id)
             if not job:
                 return None
+            self._mark_stale_job_locked(job)
             return self._to_public_payload(job)
 
     def get_job_store_id(self, job_id: str) -> Optional[str]:
@@ -323,6 +353,7 @@ class LingxingSyncJobManager:
             if not matches:
                 return None
             latest = max(matches, key=lambda x: (x.created_at, x.updated_at))
+            self._mark_stale_job_locked(latest)
             return self._to_public_payload(latest)
 
 
@@ -332,4 +363,8 @@ lingxing_sync_job_manager = LingxingSyncJobManager(
         "LINGXING_SYNC_RETENTION_HOURS", default=24, minimum=1, maximum=168
     )
     * 3600,
+    stale_seconds=_read_env_int(
+        "LINGXING_SYNC_STALE_MINUTES", default=45, minimum=5, maximum=1440
+    )
+    * 60,
 )

@@ -594,6 +594,7 @@ def create_lingxing_sync_job(
         start_date: Optional[str],
         end_date: Optional[str],
         persist: bool,
+        progress_cb: Any = None,
     ) -> Dict[str, Any]:
         result = sync_lingxing_data(
             store_id=store_id,
@@ -601,6 +602,7 @@ def create_lingxing_sync_job(
             start_date=start_date,
             end_date=end_date,
             persist=persist,
+            progress_cb=progress_cb,
         )
         if persist:
             store_repo.invalidate()
