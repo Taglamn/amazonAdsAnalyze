@@ -617,6 +617,16 @@ def _save_local_dataset(local_dataset: Dict[str, Any]) -> None:
     path.write_text(json.dumps(local_dataset, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _mark_coverage_days(
+    local_dataset: Dict[str, Any],
+    category: str,
+    days: List[str],
+) -> None:
+    coverage = local_dataset.setdefault("coverage", {})
+    existing = list(coverage.get(category, []))
+    coverage[category] = _sort_unique_dates(existing + days)
+
+
 def _build_daily_rows_from_ad_group_rows(
     store_id: str,
     requested_days: List[str],
@@ -1023,6 +1033,10 @@ def sync_lingxing_data(
         requested_days = [day.isoformat() for day in _date_iter(window.start_date, window.end_date)]
 
         local_dataset = _load_local_dataset(store_id=store_id, store_name=store_name)
+        local_dataset["store_name"] = store_name
+        if persist:
+            _save_local_dataset(local_dataset)
+
         coverage = local_dataset.get("coverage", {})
         ad_covered = set(str(x) for x in coverage.get("ad_group_reports", []))
         targeting_covered = set(str(x) for x in coverage.get("targeting", []))
@@ -1059,6 +1073,12 @@ def sync_lingxing_data(
                 f"{seller_prefix} {label} {completed_units}/{total_fetch_units}",
             )
 
+        ad_group_key_fields = ["date", "ad_combo", "campaign_id", "ad_group_id"]
+        targeting_key_fields = ["date", "ad_combo", "campaign_id", "ad_group_id", "keyword", "target_match_type"]
+        negative_key_fields = ["date", "ad_combo", "campaign_id", "ad_group_id", "matches_product", "keywords"]
+        ads_key_fields = ["date", "ad_combo", "campaign_id", "ad_group_id", "asin"]
+        change_key_fields = ["date", "operate_time", "ad_combo", "operate_type", "object_id", "object_name"]
+
         new_ad_group_rows: List[Dict[str, Any]] = []
         new_targeting_rows: List[Dict[str, Any]] = []
         new_negative_rows: List[Dict[str, Any]] = []
@@ -1070,13 +1090,21 @@ def sync_lingxing_data(
                     sid=sid,
                     report_date=day_text,
                 )
-                new_ad_group_rows.extend(
-                    _normalize_ad_group_report_rows(
-                        report_rows=report_rows,
-                        fallback_day=day_text,
-                        campaign_name_map=campaign_name_map,
-                    )
+                ad_group_chunk = _normalize_ad_group_report_rows(
+                    report_rows=report_rows,
+                    fallback_day=day_text,
+                    campaign_name_map=campaign_name_map,
                 )
+                new_ad_group_rows.extend(ad_group_chunk)
+                if ad_group_chunk:
+                    local_dataset["ad_group_reports_by_day_ad_group"] = _upsert_rows_by_key(
+                        existing_rows=list(local_dataset.get("ad_group_reports_by_day_ad_group", [])),
+                        new_rows=ad_group_chunk,
+                        key_fields=ad_group_key_fields,
+                    )
+                _mark_coverage_days(local_dataset, "ad_group_reports", [day_text])
+                if persist:
+                    _save_local_dataset(local_dataset)
                 report_fetch_progress("fetching_ad_group_reports", "ad-group reports")
 
             if day_text in missing_targeting_days:
@@ -1085,13 +1113,21 @@ def sync_lingxing_data(
                     sid=sid,
                     report_date=day_text,
                 )
-                new_targeting_rows.extend(
-                    _normalize_targeting_rows(
-                        report_rows=targeting_raw_rows,
-                        fallback_day=day_text,
-                        campaign_name_map=campaign_name_map,
-                    )
+                targeting_chunk = _normalize_targeting_rows(
+                    report_rows=targeting_raw_rows,
+                    fallback_day=day_text,
+                    campaign_name_map=campaign_name_map,
                 )
+                new_targeting_rows.extend(targeting_chunk)
+                if targeting_chunk:
+                    local_dataset["targeting_by_day_ad_group"] = _upsert_rows_by_key(
+                        existing_rows=list(local_dataset.get("targeting_by_day_ad_group", [])),
+                        new_rows=targeting_chunk,
+                        key_fields=targeting_key_fields,
+                    )
+                _mark_coverage_days(local_dataset, "targeting", [day_text])
+                if persist:
+                    _save_local_dataset(local_dataset)
                 report_fetch_progress("fetching_targeting_reports", "targeting reports")
 
             if day_text in missing_negative_days:
@@ -1100,13 +1136,21 @@ def sync_lingxing_data(
                     sid=sid,
                     report_date=day_text,
                 )
-                new_negative_rows.extend(
-                    _normalize_negative_targeting_rows(
-                        report_rows=negative_raw_rows,
-                        fallback_day=day_text,
-                        campaign_name_map=campaign_name_map,
-                    )
+                negative_chunk = _normalize_negative_targeting_rows(
+                    report_rows=negative_raw_rows,
+                    fallback_day=day_text,
+                    campaign_name_map=campaign_name_map,
                 )
+                new_negative_rows.extend(negative_chunk)
+                if negative_chunk:
+                    local_dataset["negative_targeting_by_day_ad_group"] = _upsert_rows_by_key(
+                        existing_rows=list(local_dataset.get("negative_targeting_by_day_ad_group", [])),
+                        new_rows=negative_chunk,
+                        key_fields=negative_key_fields,
+                    )
+                _mark_coverage_days(local_dataset, "negative_targeting", [day_text])
+                if persist:
+                    _save_local_dataset(local_dataset)
                 report_fetch_progress(
                     "fetching_negative_targeting_reports",
                     "negative targeting reports",
@@ -1118,13 +1162,21 @@ def sync_lingxing_data(
                     sid=sid,
                     report_date=day_text,
                 )
-                new_ads_rows.extend(
-                    _normalize_ads_rows(
-                        report_rows=ads_raw_rows,
-                        fallback_day=day_text,
-                        campaign_name_map=campaign_name_map,
-                    )
+                ads_chunk = _normalize_ads_rows(
+                    report_rows=ads_raw_rows,
+                    fallback_day=day_text,
+                    campaign_name_map=campaign_name_map,
                 )
+                new_ads_rows.extend(ads_chunk)
+                if ads_chunk:
+                    local_dataset["ads_by_day_ad_group"] = _upsert_rows_by_key(
+                        existing_rows=list(local_dataset.get("ads_by_day_ad_group", [])),
+                        new_rows=ads_chunk,
+                        key_fields=ads_key_fields,
+                    )
+                _mark_coverage_days(local_dataset, "ads", [day_text])
+                if persist:
+                    _save_local_dataset(local_dataset)
                 report_fetch_progress("fetching_ads_reports", "ads reports")
 
         op_logs: List[Dict[str, Any]] = []
@@ -1137,65 +1189,27 @@ def sync_lingxing_data(
                 end_date=chunk_end.isoformat(),
             )
             op_logs.extend(chunk_logs)
-            new_full_change_records.extend(
-                _build_full_change_records(
-                    store_id=store_id,
-                    op_logs=chunk_logs,
-                )
+            change_chunk = _build_full_change_records(
+                store_id=store_id,
+                op_logs=chunk_logs,
             )
+            new_full_change_records.extend(change_chunk)
+            if change_chunk:
+                local_dataset["change_history_by_ad_group_campaign"] = _upsert_rows_by_key(
+                    existing_rows=list(local_dataset.get("change_history_by_ad_group_campaign", [])),
+                    new_rows=change_chunk,
+                    key_fields=change_key_fields,
+                )
+            chunk_days = [item.isoformat() for item in _date_iter(chunk_start, chunk_end)]
+            _mark_coverage_days(local_dataset, "change_logs", chunk_days)
+            if persist:
+                _save_local_dataset(local_dataset)
             report_fetch_progress("fetching_change_logs", "operation logs")
 
         if total_fetch_units <= 0:
             report("using_local_cache", 72, f"{seller_prefix} no missing days, using local cache")
 
-        report("merging_local_cache", 76, f"{seller_prefix} merging data into local cache")
-        local_dataset["store_name"] = store_name
-        local_dataset["ad_group_reports_by_day_ad_group"] = _upsert_rows_by_key(
-            existing_rows=list(local_dataset.get("ad_group_reports_by_day_ad_group", [])),
-            new_rows=new_ad_group_rows,
-            key_fields=["date", "ad_combo", "campaign_id", "ad_group_id"],
-        )
-        local_dataset["targeting_by_day_ad_group"] = _upsert_rows_by_key(
-            existing_rows=list(local_dataset.get("targeting_by_day_ad_group", [])),
-            new_rows=new_targeting_rows,
-            key_fields=["date", "ad_combo", "campaign_id", "ad_group_id", "keyword", "target_match_type"],
-        )
-        local_dataset["negative_targeting_by_day_ad_group"] = _upsert_rows_by_key(
-            existing_rows=list(local_dataset.get("negative_targeting_by_day_ad_group", [])),
-            new_rows=new_negative_rows,
-            key_fields=["date", "ad_combo", "campaign_id", "ad_group_id", "matches_product", "keywords"],
-        )
-        local_dataset["ads_by_day_ad_group"] = _upsert_rows_by_key(
-            existing_rows=list(local_dataset.get("ads_by_day_ad_group", [])),
-            new_rows=new_ads_rows,
-            key_fields=["date", "ad_combo", "campaign_id", "ad_group_id", "asin"],
-        )
-        local_dataset["change_history_by_ad_group_campaign"] = _upsert_rows_by_key(
-            existing_rows=list(local_dataset.get("change_history_by_ad_group_campaign", [])),
-            new_rows=new_full_change_records,
-            key_fields=["date", "operate_time", "ad_combo", "operate_type", "object_id", "object_name"],
-        )
-
-        coverage = local_dataset.setdefault("coverage", {})
-        coverage["ad_group_reports"] = _sort_unique_dates(
-            list(coverage.get("ad_group_reports", [])) + missing_ad_days
-        )
-        coverage["targeting"] = _sort_unique_dates(
-            list(coverage.get("targeting", [])) + missing_targeting_days
-        )
-        coverage["negative_targeting"] = _sort_unique_dates(
-            list(coverage.get("negative_targeting", [])) + missing_negative_days
-        )
-        coverage["ads"] = _sort_unique_dates(
-            list(coverage.get("ads", [])) + missing_ads_days
-        )
-        coverage["change_logs"] = _sort_unique_dates(
-            list(coverage.get("change_logs", [])) + missing_change_days
-        )
-
-        if persist:
-            report("persisting_local_cache", 80, f"{seller_prefix} writing local cache")
-            _save_local_dataset(local_dataset)
+        report("merging_local_cache", 76, f"{seller_prefix} local cache checkpointed")
 
         report("building_analysis_view", 84, f"{seller_prefix} building analysis frames")
         ad_group_rows_window = _filter_rows_by_window(
