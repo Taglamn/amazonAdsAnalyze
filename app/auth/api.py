@@ -10,13 +10,16 @@ from .crud import (
     assign_role,
     authenticate_user,
     create_user,
+    ensure_actor_can_manage_user,
     ensure_user_same_tenant,
     get_user_by_id,
+    list_tenant_stores,
     list_accessible_stores,
     list_users,
     remove_store_access,
     reset_password,
     set_user_status,
+    sync_user_store_access,
     user_has_store_access,
 )
 from .config import get_auth_settings
@@ -27,10 +30,12 @@ from .schemas import (
     AccessibleStoresResponse,
     AdminCreateUserRequest,
     AssignRoleRequest,
+    BulkSetStoreAccessRequest,
     MeResponse,
     PasswordResetRequest,
     PermissionCheckResponse,
     RefreshTokenRequest,
+    TenantStoresResponse,
     SetStoreAccessRequest,
     TokenResponse,
     UserListResponse,
@@ -106,6 +111,7 @@ def create_user_by_admin(
             password=payload.password,
             role_name=payload.role.value,
             tenant_id=current_user.tenant_id,
+            store_external_ids=payload.store_ids,
         )
     except CRUDValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -231,7 +237,7 @@ def assign_user_role(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User {user_id} not found")
 
     try:
-        ensure_user_same_tenant(current_user, target)
+        ensure_actor_can_manage_user(current_user, target)
         updated = assign_role(db, user_id=user_id, role_name=payload.role.value)
     except CRUDValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -256,7 +262,7 @@ def add_user_store_access(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User {user_id} not found")
 
     try:
-        ensure_user_same_tenant(current_user, target)
+        ensure_actor_can_manage_user(current_user, target)
         add_store_access(
             db,
             user_id=user_id,
@@ -284,7 +290,7 @@ def delete_user_store_access(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User {user_id} not found")
 
     try:
-        ensure_user_same_tenant(current_user, target)
+        ensure_actor_can_manage_user(current_user, target)
         remove_store_access(db, user_id=user_id, external_store_id=external_store_id.strip())
     except CRUDValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -307,7 +313,7 @@ def check_store_access_permission(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User {user_id} not found")
 
     try:
-        ensure_user_same_tenant(current_user, target)
+        ensure_actor_can_manage_user(current_user, target)
     except CRUDValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -327,7 +333,7 @@ def get_user_store_access_list(
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User {user_id} not found")
     try:
-        ensure_user_same_tenant(current_user, target)
+        ensure_actor_can_manage_user(current_user, target)
     except CRUDValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -335,6 +341,32 @@ def get_user_store_access_list(
         user_id=user_id,
         stores=list_user_scoped_stores(db, user_id=user_id),
     )
+
+
+@router.put("/users/{user_id}/stores", response_model=UserStoreAccessListResponse)
+def bulk_set_user_store_access(
+    user_id: int,
+    payload: BulkSetStoreAccessRequest,
+    current_user: User = Depends(require_roles(RoleName.ADMIN, RoleName.MANAGER)),
+    db: Session = Depends(get_db_session),
+) -> UserStoreAccessListResponse:
+    """Bulk set user store permissions."""
+
+    target = get_user_by_id(db, user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User {user_id} not found")
+    try:
+        ensure_actor_can_manage_user(current_user, target)
+        stores = sync_user_store_access(
+            db,
+            user_id=user_id,
+            external_store_ids=payload.store_ids,
+            replace_existing=payload.replace_existing,
+        )
+    except CRUDValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return UserStoreAccessListResponse(user_id=user_id, stores=stores)
 
 
 @router.post("/users/{user_id}/password", response_model=UserOut)
@@ -401,3 +433,14 @@ def get_my_accessible_stores(
 
     stores = list_accessible_stores(db, user=current_user)
     return AccessibleStoresResponse(stores=stores)
+
+
+@router.get("/stores", response_model=TenantStoresResponse)
+def get_tenant_stores_for_permission(
+    current_user: User = Depends(require_roles(RoleName.ADMIN, RoleName.MANAGER)),
+    db: Session = Depends(get_db_session),
+) -> TenantStoresResponse:
+    """List all tenant stores for user-permission management UI."""
+
+    stores = list_tenant_stores(db, tenant_id=current_user.tenant_id)
+    return TenantStoresResponse(stores=stores)

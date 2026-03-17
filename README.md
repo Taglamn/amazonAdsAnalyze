@@ -538,6 +538,13 @@ python -m unittest -q
 - `user_store_mapping`
 - `buyer_messages`
 
+### 13.1.1 多店铺权限管理（新增增强）
+
+- 管理员创建用户时可直接下发多店铺权限（`store_ids`）。
+- 新增批量权限接口：`PUT /api/auth/users/{user_id}/stores`（支持 replace/append）。
+- 新增店铺目录接口：`GET /api/auth/stores`（用于权限配置页候选店铺）。
+- 角色边界：`manager` 仅可管理 `staff/viewer` 的店铺权限，不能修改 `admin/manager`。
+
 ### 13.2 迁移
 
 ```bash

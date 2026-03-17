@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Iterable
+from typing import Iterable, Sequence
 
 from sqlalchemy import Select, and_, select
 from sqlalchemy.orm import Session
@@ -101,6 +101,7 @@ def create_user(
     role_name: str,
     tenant_id: int,
     status: str = UserStatus.ACTIVE.value,
+    store_external_ids: Sequence[str] | None = None,
 ) -> User:
     """Create a new user with bcrypt password hash and role assignment."""
 
@@ -129,6 +130,13 @@ def create_user(
     db.add(user)
     db.commit()
     db.refresh(user)
+    if store_external_ids:
+        sync_user_store_access(
+            db,
+            user_id=user.user_id,
+            external_store_ids=store_external_ids,
+            replace_existing=True,
+        )
     return user
 
 
@@ -300,6 +308,57 @@ def add_store_access(db: Session, *, user_id: int, external_store_id: str, store
     return mapping
 
 
+def list_tenant_stores(db: Session, *, tenant_id: int) -> list[Store]:
+    """List all stores under one tenant."""
+
+    stmt = (
+        select(Store)
+        .where(Store.tenant_id == tenant_id)
+        .order_by(Store.store_name.asc(), Store.external_store_id.asc())
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
+def sync_user_store_access(
+    db: Session,
+    *,
+    user_id: int,
+    external_store_ids: Sequence[str],
+    replace_existing: bool = True,
+) -> list[Store]:
+    """
+    Sync user store access in bulk.
+
+    If replace_existing=True, the final permission set equals external_store_ids exactly.
+    """
+
+    user = get_user_by_id(db, user_id)
+    if user is None:
+        raise CRUDValidationError(f"User {user_id} not found")
+
+    normalized_ids = []
+    seen: set[str] = set()
+    for item in external_store_ids:
+        sid = str(item or "").strip()
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        normalized_ids.append(sid)
+
+    existing_stores = list_user_scoped_stores(db, user_id=user_id)
+    existing_ids = {row.external_store_id for row in existing_stores}
+    target_ids = set(normalized_ids)
+
+    if replace_existing:
+        for store_id in sorted(existing_ids - target_ids):
+            remove_store_access(db, user_id=user_id, external_store_id=store_id)
+
+    for store_id in normalized_ids:
+        add_store_access(db, user_id=user_id, external_store_id=store_id, store_name=store_id)
+
+    return list_user_scoped_stores(db, user_id=user_id)
+
+
 def remove_store_access(db: Session, *, user_id: int, external_store_id: str) -> bool:
     """Revoke user access to a specific store."""
 
@@ -393,6 +452,26 @@ def ensure_user_same_tenant(actor: User, target: User) -> None:
 
     if actor.tenant_id != target.tenant_id:
         raise CRUDValidationError("Cross-tenant operation is not allowed")
+
+
+def ensure_actor_can_manage_user(actor: User, target: User) -> None:
+    """
+    Enforce role boundary for user/store permission management.
+
+    - admin: can manage all users in same tenant
+    - manager: can manage only staff/viewer in same tenant
+    """
+
+    ensure_user_same_tenant(actor, target)
+    actor_role = actor.role.name if actor.role else ""
+    target_role = target.role.name if target.role else ""
+    if actor_role == RoleName.ADMIN.value:
+        return
+    if actor_role == RoleName.MANAGER.value:
+        if target_role in {RoleName.STAFF.value, RoleName.VIEWER.value}:
+            return
+        raise CRUDValidationError("Manager can manage staff/viewer only")
+    raise CRUDValidationError("Insufficient role permissions")
 
 
 def bulk_sync_stores(

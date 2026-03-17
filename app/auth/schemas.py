@@ -23,6 +23,7 @@ class AdminCreateUserRequest(BaseModel):
     username: str = Field(min_length=3, max_length=64)
     password: str = Field(min_length=8, max_length=128)
     role: RoleName = RoleName.VIEWER
+    store_ids: list[str] = Field(default_factory=list)
 
 
 class UserLoginRequest(BaseModel):
@@ -102,6 +103,13 @@ class SetStoreAccessRequest(BaseModel):
     store_name: str = Field(default="", max_length=255)
 
 
+class BulkSetStoreAccessRequest(BaseModel):
+    """Payload for bulk setting store authorization."""
+
+    store_ids: list[str] = Field(default_factory=list)
+    replace_existing: bool = True
+
+
 class RemoveStoreAccessRequest(BaseModel):
     """Payload for revoking store authorization."""
 
@@ -138,6 +146,12 @@ class UserStoreAccessListResponse(BaseModel):
     """Response for target user's authorized stores."""
 
     user_id: int
+    stores: list[StoreOut]
+
+
+class TenantStoresResponse(BaseModel):
+    """Response for listing all tenant stores for permission management."""
+
     stores: list[StoreOut]
 
 
