@@ -2407,10 +2407,10 @@ function App() {
                           syncJobStatus.status === 'failed'
                             ? (syncJobStatus.message || t.playbook.syncJobFailed)
                             : syncJobStatus.status === 'succeeded'
-                              ? t.playbook.syncJobDone
+                              ? (syncJobStatus.message || t.playbook.syncJobDone)
                               : syncJobStatus.status === 'running'
-                                ? t.playbook.syncJobRunning
-                                : t.playbook.syncJobQueued
+                                ? (syncJobStatus.message || t.playbook.syncJobRunning)
+                                : (syncJobStatus.message || t.playbook.syncJobQueued)
                         }`
                       : t.playbook.syncJobIdle}
                   </p>

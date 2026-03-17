@@ -1526,6 +1526,14 @@ def sync_lingxing_data(
                         total_rows,
                     )
                 ),
+                fetch_stage_cb=(
+                    lambda sub_stage, scope=chunk_scope:
+                    report(
+                        "fetching_change_logs",
+                        max(22, current_fetch_pct()),
+                        f"{seller_prefix} operation logs {scope} fetching {sub_stage} ({completed_units + 1}/{total_fetch_units})",
+                    )
+                ),
             )
             op_logs.extend(chunk_logs)
             change_chunk = _build_full_change_records(

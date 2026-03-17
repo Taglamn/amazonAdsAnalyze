@@ -488,11 +488,17 @@ class LingxingClient:
         start_date: str,
         end_date: str,
         page_progress_cb: Optional[Callable[[str, int, int, int], None]] = None,
+        fetch_stage_cb: Optional[Callable[[str], None]] = None,
     ) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
 
         for sponsored_type in ("sp", "sb", "sd"):
             for operate_type in ("adGroups", "campaigns", "keywords", "targets"):
+                if fetch_stage_cb is not None:
+                    try:
+                        fetch_stage_cb(f"{sponsored_type}/{operate_type}")
+                    except Exception:
+                        pass
                 payload = {
                     "sid": sid,
                     "log_source": "all",
