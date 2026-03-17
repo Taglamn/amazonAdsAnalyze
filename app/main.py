@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .analysis import build_bid_recommendations, build_optimization_cases
+from .backend.routes import optimization_router
 from .auth.api import router as auth_router
 from .auth.bootstrap import init_auth_schema
 from .auth.config import get_auth_settings
@@ -61,6 +62,7 @@ app.add_middleware(
 app.add_middleware(JWTAuthMiddleware)
 app.include_router(auth_router)
 app.include_router(customer_service_router)
+app.include_router(optimization_router)
 logger = get_ops_logger()
 
 

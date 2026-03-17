@@ -1,0 +1,20 @@
+{
+  "store_id": "lingxing_7469",
+  "target_acos": 28,
+  "upper_acos": 35,
+  "lower_acos": 20,
+  "strategy_configs": [
+    {
+      "ad_group_id": 1001,
+      "target_acos": 30,
+      "upper_acos": 38,
+      "lower_acos": 22
+    },
+    {
+      "ad_group_id": 1002,
+      "target_acos": 25,
+      "upper_acos": 32,
+      "lower_acos": 18
+    }
+  ]
+}

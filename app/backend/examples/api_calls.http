@@ -1,0 +1,64 @@
+### 1) Process Data
+POST http://localhost:8080/process-data
+Authorization: Bearer <JWT_TOKEN>
+Content-Type: application/json
+
+{
+  "store_id": "lingxing_7469",
+  "window_days": 3,
+  "target_acos": 28,
+  "upper_acos": 35,
+  "lower_acos": 20,
+  "traffic_click_threshold": 20,
+  "conversion_cvr_threshold": 0.1,
+  "persist": true
+}
+
+### 2) Learn Rules
+POST http://localhost:8080/learn-rules
+Authorization: Bearer <JWT_TOKEN>
+Content-Type: application/json
+
+{
+  "store_id": "lingxing_7469",
+  "min_samples": 4,
+  "min_win_rate": 0.55,
+  "include_strategy_baseline": true,
+  "max_rules": 30
+}
+
+### 3) Generate Lingxing Rules
+POST http://localhost:8080/generate-rules
+Authorization: Bearer <JWT_TOKEN>
+Content-Type: application/json
+
+{
+  "store_id": "lingxing_7469",
+  "active_only": true,
+  "max_rules": 30
+}
+
+### 4) Evaluate Rules
+POST http://localhost:8080/evaluate-rules
+Authorization: Bearer <JWT_TOKEN>
+Content-Type: application/json
+
+{
+  "store_id": "lingxing_7469",
+  "update_rules": true,
+  "observations": [
+    {
+      "rule_id": "R001",
+      "before_acos": 38.0,
+      "after_acos": 31.0,
+      "before_clicks": 45,
+      "after_clicks": 42,
+      "before_cvr": 0.09,
+      "after_cvr": 0.1
+    }
+  ]
+}
+
+### 5) List Rules
+GET http://localhost:8080/rules?store_id=lingxing_7469&active_only=true&limit=200
+Authorization: Bearer <JWT_TOKEN>

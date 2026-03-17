@@ -11,6 +11,7 @@ Amazon 广告分析与运营辅助平台，核心覆盖：
 - Gemini 白皮书与广告组建议生成
 - Context Package（365 天）导出，供 LLM 深度分析
 - 运营策略白皮书（基于本地 SQLite 的年度因果分析）
+- Amazon Ads AI 规则学习闭环（动作归因 -> 规则学习 -> 领星规则输出 -> 反馈修正）
 - 客服 AI（Buyer Message 抓取/生成/审核/发送，后端 API 已集成）
 
 ---
@@ -30,6 +31,7 @@ Amazon 广告分析与运营辅助平台，核心覆盖：
 | Context Package 异步导出 | 已上线 | Web 前端 + API | 任务化导出，轮询进度，完成后自动下载 |
 | 运营白皮书（年度/14天因果） | 后端已完成 | API | 基于 SQLite 的增量数据与因果映射 |
 | 运营周期建议（含 High Sensitivity） | 后端已完成 | API | 目标竞价/版位/否定词建议 + 价格库存偏离告警 |
+| Amazon Ads 规则学习与反馈优化 | 已上线 | API | 基于历史 bid 变更 + 表现数据学习规则，并输出领星自动规则 |
 | 客服 AI（Buyer Message） | 后端已完成 | API + Celery | 拉取消息、AI 回复、人工审核、发送，前端页面尚未接入 |
 
 ---
@@ -103,6 +105,10 @@ Amazon 广告分析与运营辅助平台，核心覆盖：
 - `app/ops_whitepaper.py`：年度运营白皮书合成（14 天因果）
 - `app/ops_advisory.py`：运营周期建议（含高敏感标记）
 - `app/ops_logger.py`：运营日志
+- `app/backend/main.py`：Amazon Ads AI Optimization 子应用入口
+- `app/backend/models/schemas.py`：规则学习 API 请求/响应模型
+- `app/backend/services/*`：数据处理、特征工程、规则学习、规则生成、反馈学习
+- `app/backend/routes/optimization.py`：`/process-data` 等规则引擎 API
 - `app/customer_service_ai/*`：客服 AI 子系统（DB/API/LLM/Task/SP-API）
 
 ---
@@ -268,6 +274,34 @@ Amazon 广告分析与运营辅助平台，核心覆盖：
 8. Human Review Interface
 9. Message Send
 
+## 6.7 Amazon Ads AI 规则学习闭环（新增）
+
+目标：在不改变领星抓数方式的前提下，利用本地历史数据自动学习并持续优化领星自动规则。
+
+流程：
+
+1. `POST /process-data`
+   - 合并 bid 变更日志 + 每日表现
+   - 为每个变更生成 `T-3/T+3` 窗口指标（ACOS、Clicks、CVR）
+   - 产出 `processed_samples`
+2. `POST /learn-rules`
+   - 基于样本做场景聚类（ACOS/流量/转化）
+   - 学习“加价何时有效/降价何时有效”模式
+   - 叠加策略层基线规则（`acos > upper` 降价，`acos < lower` 加价）
+3. `POST /generate-rules`
+   - 输出 Lingxing 可配置结构（规则名、条件、动作、频率、护栏）
+4. `POST /evaluate-rules`
+   - 评估执行后效果（effective/neutral/harmful）
+   - 自动给出修正建议（降调幅度、收紧条件、必要时禁用）
+
+本模块 SQLite 关键表（`ops_data.db`）：
+
+- `bid_changes`：标准化 bid 动作日志
+- `performance_daily`：每日表现（复用现有表）
+- `processed_samples`：动作前后效果样本
+- `rules`：学习规则与领星结构
+- `rule_results`：规则效果回写
+
 ---
 
 ## 7. API 清单（按域）
@@ -321,6 +355,14 @@ Amazon 广告分析与运营辅助平台，核心覆盖：
 - `PATCH /api/customer-service/messages/{message_id}/reply`
 - `POST /api/customer-service/messages/{message_id}/approve`
 - `POST /api/customer-service/messages/{message_id}/send`
+
+## 7.9 Amazon Ads AI 规则学习（新增）
+
+- `POST /process-data`
+- `POST /learn-rules`
+- `POST /generate-rules`
+- `POST /evaluate-rules`
+- `GET /rules`
 
 ---
 

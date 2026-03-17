@@ -1,0 +1,5 @@
+store_id,ad_group_id,keyword_id,old_bid,new_bid,change_time
+lingxing_7469,1001,kw_1001,0.5,0.6,2026-02-01T10:00:00
+lingxing_7469,1001,kw_1002,0.6,0.5,2026-02-05T10:00:00
+lingxing_7469,1002,kw_2001,0.7,0.77,2026-02-10T10:00:00
+lingxing_7469,1003,kw_3001,0.45,0.38,2026-02-15T10:00:00
