@@ -86,12 +86,16 @@ def learn_rules(payload: Dict[str, Any]) -> Dict[str, Any]:
             "saved_rules": 0,
             "message": "No processed samples found. Run /process-data first.",
         }
-    learned = learn_rules_from_samples(
+    learned, learning_stats = learn_rules_from_samples(
         store_id=store_id,
         samples_df=samples_df,
         min_samples=int(payload["min_samples"]),
         min_win_rate=float(payload["min_win_rate"]),
         max_rules=int(payload["max_rules"]),
+        min_clicks_threshold=int(payload.get("min_clicks_threshold", 10)),
+        cvr_weight=float(payload.get("cvr_weight", 0.35)),
+        outlier_iqr_k=float(payload.get("outlier_iqr_k", 1.5)),
+        enable_outlier_filter=bool(payload.get("enable_outlier_filter", True)),
     )
     if bool(payload.get("include_strategy_baseline", True)):
         strategy_map = rule_engine_repo.load_strategy_map(store_id)
@@ -104,6 +108,15 @@ def learn_rules(payload: Dict[str, Any]) -> Dict[str, Any]:
     saved = rule_engine_repo.save_rules(learned)
     return {
         "store_id": store_id,
+        "learning_stats": learning_stats,
+        "learning_params": {
+            "min_samples": int(payload["min_samples"]),
+            "min_win_rate": float(payload["min_win_rate"]),
+            "min_clicks_threshold": int(payload.get("min_clicks_threshold", 10)),
+            "cvr_weight": float(payload.get("cvr_weight", 0.35)),
+            "outlier_iqr_k": float(payload.get("outlier_iqr_k", 1.5)),
+            "enable_outlier_filter": bool(payload.get("enable_outlier_filter", True)),
+        },
         "learned_rules": learned,
         "saved_rules": saved,
     }

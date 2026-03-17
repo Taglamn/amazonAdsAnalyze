@@ -30,6 +30,10 @@ class LearnRulesRequest(BaseModel):
     store_id: str
     min_samples: int = Field(default=4, ge=1)
     min_win_rate: float = Field(default=0.55, ge=0.0, le=1.0)
+    min_clicks_threshold: int = Field(default=10, ge=0)
+    cvr_weight: float = Field(default=0.35, ge=0.0, le=2.0)
+    outlier_iqr_k: float = Field(default=1.5, ge=0.5, le=5.0)
+    enable_outlier_filter: bool = True
     include_strategy_baseline: bool = True
     max_rules: int = Field(default=30, ge=1, le=200)
 

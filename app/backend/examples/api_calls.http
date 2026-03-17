@@ -23,6 +23,10 @@ Content-Type: application/json
   "store_id": "lingxing_7469",
   "min_samples": 4,
   "min_win_rate": 0.55,
+  "min_clicks_threshold": 10,
+  "cvr_weight": 0.35,
+  "outlier_iqr_k": 1.5,
+  "enable_outlier_filter": true,
   "include_strategy_baseline": true,
   "max_rules": 30
 }
