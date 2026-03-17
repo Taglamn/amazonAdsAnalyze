@@ -72,8 +72,8 @@ def build_advice_prompt(
     whitepaper_part = ""
     if whitepaper_context.strip():
         whitepaper_part = (
-            "First read and strictly follow this store whitepaper before giving advice.\n"
-            "Store whitepaper:\n"
+            "First read and strictly follow this store Lingxing auto-rule blueprint before giving advice.\n"
+            "Store Lingxing auto-rule blueprint:\n"
             "<<WHITEPAPER_START>>\n"
             f"{whitepaper_context}\n"
             "<<WHITEPAPER_END>>\n"
@@ -82,10 +82,16 @@ def build_advice_prompt(
     return (
         f"You are the expert for Store {store_id}. "
         f"{whitepaper_part}"
-        f"Based on these rules {json.dumps(rules, ensure_ascii=False)} and yesterday's metrics "
-        f"{json.dumps(metrics, ensure_ascii=False)}, provide 3 specific bid adjustments "
-        f"and 1 negative keyword suggestion. "
-        "Return markdown with clear multi-line bullet points (not one line). "
+        f"Based on these playbook rules {json.dumps(rules, ensure_ascii=False)} and latest metrics "
+        f"{json.dumps(metrics, ensure_ascii=False)}, output optimization changes for Lingxing auto rules. "
+        "Return markdown with these sections: "
+        "Rule Change Summary, Rule-by-Rule Adjustments, Risk Controls, and 7-Day Validation Plan. "
+        "For each adjusted rule, include: rule_name, what_changed, trigger/threshold change, action change, expected impact. "
+        "Also include exactly one JSON code block named `rule_patch` with format: "
+        "{\"store_id\":\"...\",\"updates\":[{\"rule_name\":\"...\",\"operation\":\"add|update|disable\","
+        "\"fields\":{\"conditions\":[],\"action\":{},\"frequency_days\":1},\"reason\":\"...\"}]}. "
+        "If no change is needed, return an empty updates array with reason. "
+        "Do not output a single-line response. "
         f"{_language_directive(language)}"
     )
 
@@ -99,19 +105,29 @@ def build_whitepaper_prompt(
 ) -> str:
     language = normalize_language(language)
 
-    sections = (
-        "Current Diagnosis, Bid Strategy, Budget Reallocation, Search Term Hygiene, "
-        "7-Day Action Plan, Risks"
-    )
-    if language == "zh":
-        sections = "现状诊断、出价策略、预算倾斜、搜索词清洗、7天行动计划、风险提示"
-
     return (
-        f"You are an Amazon Ads strategist for Store {store_id}. "
-        f"Create an optimization strategy whitepaper with sections: {sections}. "
+        f"You are an Amazon Ads automation strategist for Store {store_id}. "
+        "Generate a Lingxing Auto-Rule Blueprint that operations can configure directly in Lingxing ERP. "
         f"Follow playbook rules {json.dumps(rules, ensure_ascii=False)}. "
-        f"Use performance data {json.dumps(performance_rows, ensure_ascii=False)} and historical cases "
-        f"{json.dumps(cases, ensure_ascii=False)}. Keep it actionable and numeric. "
+        f"Use performance data {json.dumps(performance_rows, ensure_ascii=False)} and historical cases {json.dumps(cases, ensure_ascii=False)}. "
+        "Auto-rule constraints to follow: include ad type/campaign type/targeting strategy scope, "
+        "define execution mode (all conditions or any condition), each rule can have up to 5 conditions, "
+        "and include execution frequency (manual or every N days). "
+        "Output must be markdown with sections in this order: "
+        "1) Rule Design Principles, 2) Rule Catalog, 3) Implementation Checklist, 4) Monitoring KPI & Rollback. "
+        "Rule Catalog must be a table with columns: "
+        "rule_name, objective, apply_scope, trigger_window, conditions, action, frequency_days, priority, guardrail. "
+        "Then output exactly one JSON code block named `lingxing_auto_rules` in this schema: "
+        "{\"store_id\":\"...\",\"generated_at\":\"YYYY-MM-DD\",\"rules\":["
+        "{\"rule_name\":\"...\",\"ad_type\":\"SP|SB|SD\",\"campaign_type\":\"auto|manual|all\","
+        "\"targeting_strategy\":\"keyword|product|audience|all\","
+        "\"apply_scope\":{\"campaign_names\":[],\"ad_group_names\":[]},"
+        "\"execution_mode\":\"all_match|any_match\","
+        "\"time_window_mode\":\"yesterday|last_7_days|last_14_days|last_30_days\","
+        "\"conditions\":[{\"metric\":\"acos|ctr|clicks|cpc|spend|sales|top_of_search_is\",\"operator\":\">|<|>=|<=|=\",\"value\":0}],"
+        "\"action\":{\"type\":\"adjust_bid_pct|adjust_placement_pct|add_negative_keyword|pause_target|budget_shift_pct\",\"value\":0},"
+        "\"frequency_days\":1,\"priority\":\"high|medium|low\",\"notes\":\"...\"}]}. "
+        "Keep every rule specific and numeric so ops can copy into Lingxing without rewriting. "
         f"{_language_directive(language)}"
     )
 

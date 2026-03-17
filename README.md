@@ -140,7 +140,7 @@ Amazon 广告分析与运营辅助平台，核心覆盖：
 
 ### C. 文件输出
 
-- 文本白皮书：`app/data/whitepapers/{store_id}.md`
+- 自动规则方案（文本）：`app/data/whitepapers/{store_id}.md`
 - 运营白皮书：`app/data/ops_whitepapers/{store_id}_ops_whitepaper.{json|md}`
 - Context 导出：`app/data/context_packages/{job_id}.json`
 - 运营日志：`app/data/logs/operations.log`
@@ -165,17 +165,19 @@ Amazon 广告分析与运营辅助平台，核心覆盖：
    - `lingxing_output_rows`（表格显示）
 4. `persist=true` 时落盘 CSV，并自动补默认 playbook
 
-## 6.2 Gemini 白皮书/建议
+## 6.2 Gemini 自动规则方案/建议
 
-- 白皮书：`POST /api/stores/{store_id}/ai/whitepaper`
+- 自动规则方案：`POST /api/stores/{store_id}/ai/whitepaper`
 - 建议：`POST /api/stores/{store_id}/ai/advice`
 
 建议生成逻辑：
 
-1. 优先读取已保存白皮书
-2. 如无白皮书，先自动生成并保存
-3. 构造 Prompt（带店铺规则 + 昨日指标 + 白皮书上下文）
-4. 输出多行可读文本；支持 continuation rounds 防截断
+1. 优先读取已保存自动规则方案
+2. 如无规则方案，先自动生成并保存
+3. 构造 Prompt（带店铺规则 + 最新指标 + 规则方案上下文）
+4. 规则方案输出包含可配置字段（触发条件、执行频率、动作、优先级）和 JSON
+5. 建议输出为规则增量优化（add/update/disable + 原因 + 风险控制）
+6. 输出多行可读文本；支持 continuation rounds 防截断
 
 ## 6.3 上传 Excel 分析
 
@@ -184,7 +186,7 @@ Amazon 广告分析与运营辅助平台，核心覆盖：
 - 自动识别两个 sheet（日报/操作历史）
 - 自动匹配中英文字段名
 - 提取 bid 变化
-- 生成摘要 + 启发式建议 + Gemini 白皮书/建议
+- 生成摘要 + 启发式建议 + Gemini 自动规则方案/建议
 
 ## 6.4 Context Package（给 Gemini 的结构化上下文）
 
