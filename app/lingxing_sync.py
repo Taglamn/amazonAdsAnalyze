@@ -560,6 +560,230 @@ def _latest_dataset_cache_path(store_id: str) -> Path:
     return output_dir / f"{store_id}_latest.json"
 
 
+def _coverage_index_path(store_id: str) -> Path:
+    output_dir = DATA_DIR / "lingxing_sync_index"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir / f"{store_id}.json"
+
+
+def _shard_day_path(store_id: str, category: str, day_text: str, ensure_dir: bool = False) -> Path:
+    output_dir = DATA_DIR / "lingxing_sync_shards" / store_id / category
+    if ensure_dir:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir / f"{day_text}.json"
+
+
+def _atomic_write_json(path: Path, payload: Any) -> None:
+    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+    tmp_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    tmp_path.replace(path)
+
+
+def _extract_coverage_from_legacy_cache(store_id: str) -> Dict[str, List[str]]:
+    path = _latest_dataset_cache_path(store_id)
+    if not path.exists():
+        return {}
+
+    scans = [2 * 1024 * 1024, 8 * 1024 * 1024, 32 * 1024 * 1024]
+    for size in scans:
+        try:
+            with path.open("r", encoding="utf-8", errors="ignore") as fh:
+                head = fh.read(size)
+        except OSError:
+            return {}
+
+        key_idx = head.find('"coverage"')
+        if key_idx < 0:
+            continue
+        colon_idx = head.find(":", key_idx)
+        if colon_idx < 0:
+            continue
+        brace_start = head.find("{", colon_idx)
+        if brace_start < 0:
+            continue
+
+        depth = 0
+        in_string = False
+        escaped = False
+        end_idx = -1
+        for idx in range(brace_start, len(head)):
+            ch = head[idx]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+
+            if ch == '"':
+                in_string = True
+                continue
+            if ch == "{":
+                depth += 1
+                continue
+            if ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end_idx = idx
+                    break
+
+        if end_idx < 0:
+            continue
+
+        raw = head[brace_start : end_idx + 1]
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, dict):
+            return {}
+
+        result: Dict[str, List[str]] = {}
+        for key in ("ad_group_reports", "targeting", "negative_targeting", "ads", "change_logs"):
+            values = parsed.get(key)
+            if isinstance(values, list):
+                result[key] = _sort_unique_dates([str(item) for item in values])
+            else:
+                result[key] = []
+        return result
+
+    return {}
+
+
+def _empty_coverage_index(store_id: str, store_name: str) -> Dict[str, Any]:
+    return {
+        "store_id": store_id,
+        "store_name": store_name,
+        "updated_at": "",
+        "coverage": {
+            "ad_group_reports": [],
+            "targeting": [],
+            "negative_targeting": [],
+            "ads": [],
+            "change_logs": [],
+        },
+    }
+
+
+def _normalize_coverage_index(payload: Dict[str, Any], store_id: str, store_name: str) -> Dict[str, Any]:
+    payload.setdefault("store_id", store_id)
+    payload.setdefault("store_name", store_name)
+    payload.setdefault("updated_at", "")
+    coverage = payload.setdefault("coverage", {})
+    for key in ("ad_group_reports", "targeting", "negative_targeting", "ads", "change_logs"):
+        values = coverage.get(key)
+        if isinstance(values, list):
+            coverage[key] = _sort_unique_dates([str(item) for item in values])
+        else:
+            coverage[key] = []
+    return payload
+
+
+def _load_coverage_index(store_id: str, store_name: str) -> Dict[str, Any]:
+    path = _coverage_index_path(store_id)
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                return _normalize_coverage_index(payload, store_id=store_id, store_name=store_name)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    coverage = _extract_coverage_from_legacy_cache(store_id)
+    payload = _empty_coverage_index(store_id=store_id, store_name=store_name)
+    payload["coverage"] = _normalize_coverage_index(
+        {"coverage": coverage},
+        store_id=store_id,
+        store_name=store_name,
+    )["coverage"]
+    return payload
+
+
+def _save_coverage_index(index_payload: Dict[str, Any]) -> None:
+    store_id = str(index_payload.get("store_id") or "").strip()
+    if not store_id:
+        return
+    index_payload["updated_at"] = datetime.utcnow().isoformat()
+    normalized = _normalize_coverage_index(
+        dict(index_payload),
+        store_id=store_id,
+        store_name=str(index_payload.get("store_name") or store_id),
+    )
+    _atomic_write_json(_coverage_index_path(store_id), normalized)
+
+
+def _save_day_shard(store_id: str, category: str, day_text: str, rows: List[Dict[str, Any]]) -> None:
+    _atomic_write_json(_shard_day_path(store_id, category, day_text, ensure_dir=True), rows)
+
+
+def _load_day_shard(store_id: str, category: str, day_text: str) -> List[Dict[str, Any]] | None:
+    path = _shard_day_path(store_id, category, day_text)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, list):
+        return None
+    rows: List[Dict[str, Any]] = []
+    for item in payload:
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows
+
+
+def _group_rows_by_day(
+    rows: List[Dict[str, Any]],
+    fallback_day: str = "",
+) -> Dict[str, List[Dict[str, Any]]]:
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for row in rows:
+        day = str(row.get("date") or "").strip()[:10] or fallback_day
+        if not day:
+            continue
+        grouped.setdefault(day, []).append(row)
+    return grouped
+
+
+def _filter_rows_by_days(rows: List[Dict[str, Any]], day_texts: List[str]) -> List[Dict[str, Any]]:
+    day_set = {str(day) for day in day_texts}
+    return [row for row in rows if str(row.get("date") or "").strip()[:10] in day_set]
+
+
+def _load_rows_from_shards_with_fallback(
+    store_id: str,
+    category: str,
+    requested_days: List[str],
+    fallback_rows_loader: Callable[[], List[Dict[str, Any]]] | None = None,
+    persist_shards: bool = True,
+) -> List[Dict[str, Any]]:
+    output_rows: List[Dict[str, Any]] = []
+    missing_days: List[str] = []
+    for day_text in requested_days:
+        shard_rows = _load_day_shard(store_id=store_id, category=category, day_text=day_text)
+        if shard_rows is None:
+            missing_days.append(day_text)
+            continue
+        output_rows.extend(shard_rows)
+
+    if missing_days and fallback_rows_loader is not None:
+        fallback_rows = _filter_rows_by_days(fallback_rows_loader(), missing_days)
+        grouped = _group_rows_by_day(fallback_rows)
+        for day_text in missing_days:
+            day_rows = grouped.get(day_text, [])
+            if persist_shards:
+                _save_day_shard(store_id=store_id, category=category, day_text=day_text, rows=day_rows)
+            output_rows.extend(day_rows)
+
+    return output_rows
+
+
 def _empty_local_dataset(store_id: str, store_name: str) -> Dict[str, Any]:
     return {
         "store_id": store_id,
@@ -1031,13 +1255,13 @@ def sync_lingxing_data(
         campaign_name_map = client.fetch_campaign_names(access_token=access_token, sid=sid)
         bid_snapshots = client.fetch_bid_snapshots(access_token=access_token, sid=sid)
         requested_days = [day.isoformat() for day in _date_iter(window.start_date, window.end_date)]
-
-        local_dataset = _load_local_dataset(store_id=store_id, store_name=store_name)
-        local_dataset["store_name"] = store_name
+        report("scanning_local_index", 21, f"{seller_prefix} scanning local coverage index")
+        coverage_index = _load_coverage_index(store_id=store_id, store_name=store_name)
+        coverage_index["store_name"] = store_name
         if persist:
-            _save_local_dataset(local_dataset)
+            _save_coverage_index(coverage_index)
 
-        coverage = local_dataset.get("coverage", {})
+        coverage = coverage_index.get("coverage", {})
         ad_covered = set(str(x) for x in coverage.get("ad_group_reports", []))
         targeting_covered = set(str(x) for x in coverage.get("targeting", []))
         negative_covered = set(str(x) for x in coverage.get("negative_targeting", []))
@@ -1050,6 +1274,10 @@ def sync_lingxing_data(
         missing_ads_days = _missing_days(requested_days, ads_covered)
         missing_change_days = _missing_days(requested_days, change_covered)
         change_ranges = _build_missing_date_ranges(missing_change_days, max_span_days=30)
+        missing_ad_days_set = set(missing_ad_days)
+        missing_targeting_days_set = set(missing_targeting_days)
+        missing_negative_days_set = set(missing_negative_days)
+        missing_ads_days_set = set(missing_ads_days)
 
         total_fetch_units = (
             len(missing_ad_days)
@@ -1084,7 +1312,7 @@ def sync_lingxing_data(
         new_negative_rows: List[Dict[str, Any]] = []
         new_ads_rows: List[Dict[str, Any]] = []
         for day_text in requested_days:
-            if day_text in missing_ad_days:
+            if day_text in missing_ad_days_set:
                 report_rows = client.fetch_ad_reports_for_day(
                     access_token=access_token,
                     sid=sid,
@@ -1096,18 +1324,18 @@ def sync_lingxing_data(
                     campaign_name_map=campaign_name_map,
                 )
                 new_ad_group_rows.extend(ad_group_chunk)
-                if ad_group_chunk:
-                    local_dataset["ad_group_reports_by_day_ad_group"] = _upsert_rows_by_key(
-                        existing_rows=list(local_dataset.get("ad_group_reports_by_day_ad_group", [])),
-                        new_rows=ad_group_chunk,
-                        key_fields=ad_group_key_fields,
-                    )
-                _mark_coverage_days(local_dataset, "ad_group_reports", [day_text])
                 if persist:
-                    _save_local_dataset(local_dataset)
+                    _save_day_shard(
+                        store_id=store_id,
+                        category="ad_group_reports",
+                        day_text=day_text,
+                        rows=ad_group_chunk,
+                    )
+                    _mark_coverage_days(coverage_index, "ad_group_reports", [day_text])
+                    _save_coverage_index(coverage_index)
                 report_fetch_progress("fetching_ad_group_reports", "ad-group reports")
 
-            if day_text in missing_targeting_days:
+            if day_text in missing_targeting_days_set:
                 targeting_raw_rows = client.fetch_targeting_reports_for_day(
                     access_token=access_token,
                     sid=sid,
@@ -1119,18 +1347,18 @@ def sync_lingxing_data(
                     campaign_name_map=campaign_name_map,
                 )
                 new_targeting_rows.extend(targeting_chunk)
-                if targeting_chunk:
-                    local_dataset["targeting_by_day_ad_group"] = _upsert_rows_by_key(
-                        existing_rows=list(local_dataset.get("targeting_by_day_ad_group", [])),
-                        new_rows=targeting_chunk,
-                        key_fields=targeting_key_fields,
-                    )
-                _mark_coverage_days(local_dataset, "targeting", [day_text])
                 if persist:
-                    _save_local_dataset(local_dataset)
+                    _save_day_shard(
+                        store_id=store_id,
+                        category="targeting",
+                        day_text=day_text,
+                        rows=targeting_chunk,
+                    )
+                    _mark_coverage_days(coverage_index, "targeting", [day_text])
+                    _save_coverage_index(coverage_index)
                 report_fetch_progress("fetching_targeting_reports", "targeting reports")
 
-            if day_text in missing_negative_days:
+            if day_text in missing_negative_days_set:
                 negative_raw_rows = client.fetch_negative_targeting_reports_for_day(
                     access_token=access_token,
                     sid=sid,
@@ -1142,21 +1370,21 @@ def sync_lingxing_data(
                     campaign_name_map=campaign_name_map,
                 )
                 new_negative_rows.extend(negative_chunk)
-                if negative_chunk:
-                    local_dataset["negative_targeting_by_day_ad_group"] = _upsert_rows_by_key(
-                        existing_rows=list(local_dataset.get("negative_targeting_by_day_ad_group", [])),
-                        new_rows=negative_chunk,
-                        key_fields=negative_key_fields,
-                    )
-                _mark_coverage_days(local_dataset, "negative_targeting", [day_text])
                 if persist:
-                    _save_local_dataset(local_dataset)
+                    _save_day_shard(
+                        store_id=store_id,
+                        category="negative_targeting",
+                        day_text=day_text,
+                        rows=negative_chunk,
+                    )
+                    _mark_coverage_days(coverage_index, "negative_targeting", [day_text])
+                    _save_coverage_index(coverage_index)
                 report_fetch_progress(
                     "fetching_negative_targeting_reports",
                     "negative targeting reports",
                 )
 
-            if day_text in missing_ads_days:
+            if day_text in missing_ads_days_set:
                 ads_raw_rows = client.fetch_ads_reports_for_day(
                     access_token=access_token,
                     sid=sid,
@@ -1168,15 +1396,15 @@ def sync_lingxing_data(
                     campaign_name_map=campaign_name_map,
                 )
                 new_ads_rows.extend(ads_chunk)
-                if ads_chunk:
-                    local_dataset["ads_by_day_ad_group"] = _upsert_rows_by_key(
-                        existing_rows=list(local_dataset.get("ads_by_day_ad_group", [])),
-                        new_rows=ads_chunk,
-                        key_fields=ads_key_fields,
-                    )
-                _mark_coverage_days(local_dataset, "ads", [day_text])
                 if persist:
-                    _save_local_dataset(local_dataset)
+                    _save_day_shard(
+                        store_id=store_id,
+                        category="ads",
+                        day_text=day_text,
+                        rows=ads_chunk,
+                    )
+                    _mark_coverage_days(coverage_index, "ads", [day_text])
+                    _save_coverage_index(coverage_index)
                 report_fetch_progress("fetching_ads_reports", "ads reports")
 
         op_logs: List[Dict[str, Any]] = []
@@ -1194,16 +1422,18 @@ def sync_lingxing_data(
                 op_logs=chunk_logs,
             )
             new_full_change_records.extend(change_chunk)
-            if change_chunk:
-                local_dataset["change_history_by_ad_group_campaign"] = _upsert_rows_by_key(
-                    existing_rows=list(local_dataset.get("change_history_by_ad_group_campaign", [])),
-                    new_rows=change_chunk,
-                    key_fields=change_key_fields,
-                )
             chunk_days = [item.isoformat() for item in _date_iter(chunk_start, chunk_end)]
-            _mark_coverage_days(local_dataset, "change_logs", chunk_days)
             if persist:
-                _save_local_dataset(local_dataset)
+                grouped_change_rows = _group_rows_by_day(change_chunk)
+                for day_text in chunk_days:
+                    _save_day_shard(
+                        store_id=store_id,
+                        category="change_logs",
+                        day_text=day_text,
+                        rows=grouped_change_rows.get(day_text, []),
+                    )
+                _mark_coverage_days(coverage_index, "change_logs", chunk_days)
+                _save_coverage_index(coverage_index)
             report_fetch_progress("fetching_change_logs", "operation logs")
 
         if total_fetch_units <= 0:
@@ -1212,31 +1442,105 @@ def sync_lingxing_data(
         report("merging_local_cache", 76, f"{seller_prefix} local cache checkpointed")
 
         report("building_analysis_view", 84, f"{seller_prefix} building analysis frames")
-        ad_group_rows_window = _filter_rows_by_window(
-            list(local_dataset.get("ad_group_reports_by_day_ad_group", [])),
-            start_day=window.start_date,
-            end_day=window.end_date,
-        )
-        targeting_rows_all = _filter_rows_by_window(
-            list(local_dataset.get("targeting_by_day_ad_group", [])),
-            start_day=window.start_date,
-            end_day=window.end_date,
-        )
-        negative_targeting_rows_all = _filter_rows_by_window(
-            list(local_dataset.get("negative_targeting_by_day_ad_group", [])),
-            start_day=window.start_date,
-            end_day=window.end_date,
-        )
-        ads_rows_all = _filter_rows_by_window(
-            list(local_dataset.get("ads_by_day_ad_group", [])),
-            start_day=window.start_date,
-            end_day=window.end_date,
-        )
-        full_change_records = _filter_rows_by_window(
-            list(local_dataset.get("change_history_by_ad_group_campaign", [])),
-            start_day=window.start_date,
-            end_day=window.end_date,
-        )
+        if persist:
+            legacy_dataset: Dict[str, Any] | None = None
+
+            def _legacy_rows(field: str) -> List[Dict[str, Any]]:
+                nonlocal legacy_dataset
+                if legacy_dataset is None:
+                    report("loading_legacy_cache", 83, f"{seller_prefix} loading legacy cache fallback")
+                    legacy_dataset = _load_local_dataset(store_id=store_id, store_name=store_name)
+                return list(legacy_dataset.get(field, []))
+
+            ad_group_rows_window = _load_rows_from_shards_with_fallback(
+                store_id=store_id,
+                category="ad_group_reports",
+                requested_days=requested_days,
+                fallback_rows_loader=lambda: _legacy_rows("ad_group_reports_by_day_ad_group"),
+                persist_shards=True,
+            )
+            targeting_rows_all = _load_rows_from_shards_with_fallback(
+                store_id=store_id,
+                category="targeting",
+                requested_days=requested_days,
+                fallback_rows_loader=lambda: _legacy_rows("targeting_by_day_ad_group"),
+                persist_shards=True,
+            )
+            negative_targeting_rows_all = _load_rows_from_shards_with_fallback(
+                store_id=store_id,
+                category="negative_targeting",
+                requested_days=requested_days,
+                fallback_rows_loader=lambda: _legacy_rows("negative_targeting_by_day_ad_group"),
+                persist_shards=True,
+            )
+            ads_rows_all = _load_rows_from_shards_with_fallback(
+                store_id=store_id,
+                category="ads",
+                requested_days=requested_days,
+                fallback_rows_loader=lambda: _legacy_rows("ads_by_day_ad_group"),
+                persist_shards=True,
+            )
+            full_change_records = _load_rows_from_shards_with_fallback(
+                store_id=store_id,
+                category="change_logs",
+                requested_days=requested_days,
+                fallback_rows_loader=lambda: _legacy_rows("change_history_by_ad_group_campaign"),
+                persist_shards=True,
+            )
+        else:
+            local_dataset = _load_local_dataset(store_id=store_id, store_name=store_name)
+            ad_group_rows_window = _filter_rows_by_window(
+                list(local_dataset.get("ad_group_reports_by_day_ad_group", [])),
+                start_day=window.start_date,
+                end_day=window.end_date,
+            )
+            targeting_rows_all = _filter_rows_by_window(
+                list(local_dataset.get("targeting_by_day_ad_group", [])),
+                start_day=window.start_date,
+                end_day=window.end_date,
+            )
+            negative_targeting_rows_all = _filter_rows_by_window(
+                list(local_dataset.get("negative_targeting_by_day_ad_group", [])),
+                start_day=window.start_date,
+                end_day=window.end_date,
+            )
+            ads_rows_all = _filter_rows_by_window(
+                list(local_dataset.get("ads_by_day_ad_group", [])),
+                start_day=window.start_date,
+                end_day=window.end_date,
+            )
+            full_change_records = _filter_rows_by_window(
+                list(local_dataset.get("change_history_by_ad_group_campaign", [])),
+                start_day=window.start_date,
+                end_day=window.end_date,
+            )
+
+            ad_group_rows_window = _upsert_rows_by_key(
+                existing_rows=ad_group_rows_window,
+                new_rows=new_ad_group_rows,
+                key_fields=ad_group_key_fields,
+            )
+            targeting_rows_all = _upsert_rows_by_key(
+                existing_rows=targeting_rows_all,
+                new_rows=new_targeting_rows,
+                key_fields=targeting_key_fields,
+            )
+            negative_targeting_rows_all = _upsert_rows_by_key(
+                existing_rows=negative_targeting_rows_all,
+                new_rows=new_negative_rows,
+                key_fields=negative_key_fields,
+            )
+            ads_rows_all = _upsert_rows_by_key(
+                existing_rows=ads_rows_all,
+                new_rows=new_ads_rows,
+                key_fields=ads_key_fields,
+            )
+            full_change_records = _upsert_rows_by_key(
+                existing_rows=full_change_records,
+                new_rows=new_full_change_records,
+                key_fields=change_key_fields,
+            )
+
         campaign_daily_rows_all = _build_campaign_daily_rows(
             report_rows=ad_group_rows_window,
             fallback_day=window.end_date.isoformat(),
