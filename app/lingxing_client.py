@@ -8,7 +8,7 @@ import socket
 import ssl
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib import error, parse, request
 
 try:
@@ -323,6 +323,7 @@ class LingxingClient:
         path: str,
         body: Dict[str, Any],
         page_size: int = 100,
+        page_progress_cb: Optional[Callable[[str, int, int, int], None]] = None,
     ) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
         offset = 0
@@ -357,6 +358,11 @@ class LingxingClient:
             data = resp.get("data") or []
             total = int(resp.get("total", 0) or 0)
             rows.extend(data)
+            if page_progress_cb is not None:
+                try:
+                    page_progress_cb(path, page_count, len(data), len(rows))
+                except Exception:
+                    pass
 
             returned_next = str(resp.get("next_token") or "").strip()
             if returned_next:
@@ -392,6 +398,7 @@ class LingxingClient:
         access_token: str,
         candidate_paths: List[str],
         body: Dict[str, Any],
+        page_progress_cb: Optional[Callable[[str, int, int, int], None]] = None,
     ) -> List[Dict[str, Any]]:
         for path in candidate_paths:
             try:
@@ -399,6 +406,7 @@ class LingxingClient:
                     access_token=access_token,
                     path=path,
                     body=body,
+                    page_progress_cb=page_progress_cb,
                 )
             except LingxingApiError:
                 continue
@@ -410,6 +418,7 @@ class LingxingClient:
         sid: int,
         report_date: str,
         specs: List[Tuple[str, List[str], Dict[str, Any]]],
+        page_progress_cb: Optional[Callable[[str, int, int, int], None]] = None,
     ) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
         for sponsored_type, candidate_paths, extra in specs:
@@ -422,6 +431,7 @@ class LingxingClient:
                 access_token=access_token,
                 candidate_paths=candidate_paths,
                 body=payload,
+                page_progress_cb=page_progress_cb,
             )
             for item in data:
                 row = dict(item)
@@ -442,6 +452,7 @@ class LingxingClient:
         access_token: str,
         sid: int,
         report_date: str,
+        page_progress_cb: Optional[Callable[[str, int, int, int], None]] = None,
     ) -> List[Dict[str, Any]]:
         specs = [
             ("sp", "/pb/openapi/newad/spAdGroupReports", {"show_detail": 1}),
@@ -461,6 +472,7 @@ class LingxingClient:
                 access_token=access_token,
                 path=path,
                 body=payload,
+                page_progress_cb=page_progress_cb,
             )
             for item in data:
                 row = dict(item)
@@ -475,6 +487,7 @@ class LingxingClient:
         sid: int,
         start_date: str,
         end_date: str,
+        page_progress_cb: Optional[Callable[[str, int, int, int], None]] = None,
     ) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
 
@@ -492,6 +505,14 @@ class LingxingClient:
                     access_token=access_token,
                     path="/pb/openapi/newad/apiLogStandard",
                     body=payload,
+                    page_progress_cb=(
+                        None
+                        if page_progress_cb is None
+                        else (
+                            lambda path, page, page_rows, total_rows, st=sponsored_type, ot=operate_type:
+                            page_progress_cb(f"{path}[{st}/{ot}]", page, page_rows, total_rows)
+                        )
+                    ),
                 )
                 for item in data:
                     row = dict(item)
@@ -676,6 +697,7 @@ class LingxingClient:
         access_token: str,
         sid: int,
         report_date: str,
+        page_progress_cb: Optional[Callable[[str, int, int, int], None]] = None,
     ) -> List[Dict[str, Any]]:
         specs = [
             (
@@ -712,6 +734,7 @@ class LingxingClient:
             sid=sid,
             report_date=report_date,
             specs=specs,
+            page_progress_cb=page_progress_cb,
         )
 
     def fetch_negative_targeting_reports_for_day(
@@ -719,6 +742,7 @@ class LingxingClient:
         access_token: str,
         sid: int,
         report_date: str,
+        page_progress_cb: Optional[Callable[[str, int, int, int], None]] = None,
     ) -> List[Dict[str, Any]]:
         specs = [
             (
@@ -752,6 +776,7 @@ class LingxingClient:
             sid=sid,
             report_date=report_date,
             specs=specs,
+            page_progress_cb=page_progress_cb,
         )
 
     def fetch_ads_reports_for_day(
@@ -759,6 +784,7 @@ class LingxingClient:
         access_token: str,
         sid: int,
         report_date: str,
+        page_progress_cb: Optional[Callable[[str, int, int, int], None]] = None,
     ) -> List[Dict[str, Any]]:
         specs = [
             (
@@ -791,6 +817,7 @@ class LingxingClient:
             sid=sid,
             report_date=report_date,
             specs=specs,
+            page_progress_cb=page_progress_cb,
         )
 
     def fetch_ad_group_product_links(self, access_token: str, sid: int) -> List[Dict[str, Any]]:

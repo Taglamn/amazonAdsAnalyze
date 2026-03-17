@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -1287,6 +1288,12 @@ def sync_lingxing_data(
             + len(change_ranges)
         )
         completed_units = 0
+        last_page_report_at = 0.0
+
+        def current_fetch_pct() -> int:
+            if total_fetch_units <= 0:
+                return 72
+            return min(72, 22 + int((50 * completed_units) / total_fetch_units))
 
         def report_fetch_progress(stage: str, label: str) -> None:
             nonlocal completed_units
@@ -1294,11 +1301,45 @@ def sync_lingxing_data(
             if total_fetch_units <= 0:
                 report(stage, 72, f"{seller_prefix} local cache hit, skipping remote fetch")
                 return
-            pct = 22 + int((50 * completed_units) / total_fetch_units)
             report(
                 stage,
-                min(72, pct),
+                current_fetch_pct(),
                 f"{seller_prefix} {label} {completed_units}/{total_fetch_units}",
+            )
+
+        def report_fetch_start(stage: str, label: str, scope: str) -> None:
+            if total_fetch_units <= 0:
+                return
+            report(
+                stage,
+                max(22, current_fetch_pct()),
+                f"{seller_prefix} {label} {scope} ({completed_units + 1}/{total_fetch_units})",
+            )
+
+        def report_page_progress(
+            stage: str,
+            label: str,
+            scope: str,
+            endpoint: str,
+            page: int,
+            page_rows: int,
+            total_rows: int,
+        ) -> None:
+            nonlocal last_page_report_at
+            if total_fetch_units <= 0:
+                return
+            now = time.monotonic()
+            if page > 1 and now - last_page_report_at < 1.5 and page % 5 != 0:
+                return
+            last_page_report_at = now
+            report(
+                stage,
+                max(22, current_fetch_pct()),
+                (
+                    f"{seller_prefix} {label} {scope} page {page} "
+                    f"rows+{page_rows} total={total_rows if total_rows > 0 else '?'} "
+                    f"via {endpoint} ({completed_units + 1}/{total_fetch_units})"
+                ),
             )
 
         ad_group_key_fields = ["date", "ad_combo", "campaign_id", "ad_group_id"]
@@ -1313,10 +1354,23 @@ def sync_lingxing_data(
         new_ads_rows: List[Dict[str, Any]] = []
         for day_text in requested_days:
             if day_text in missing_ad_days_set:
+                report_fetch_start("fetching_ad_group_reports", "ad-group reports", day_text)
                 report_rows = client.fetch_ad_reports_for_day(
                     access_token=access_token,
                     sid=sid,
                     report_date=day_text,
+                    page_progress_cb=(
+                        lambda endpoint, page, page_rows, total_rows, day=day_text:
+                        report_page_progress(
+                            "fetching_ad_group_reports",
+                            "ad-group reports",
+                            day,
+                            endpoint,
+                            page,
+                            page_rows,
+                            total_rows,
+                        )
+                    ),
                 )
                 ad_group_chunk = _normalize_ad_group_report_rows(
                     report_rows=report_rows,
@@ -1336,10 +1390,23 @@ def sync_lingxing_data(
                 report_fetch_progress("fetching_ad_group_reports", "ad-group reports")
 
             if day_text in missing_targeting_days_set:
+                report_fetch_start("fetching_targeting_reports", "targeting reports", day_text)
                 targeting_raw_rows = client.fetch_targeting_reports_for_day(
                     access_token=access_token,
                     sid=sid,
                     report_date=day_text,
+                    page_progress_cb=(
+                        lambda endpoint, page, page_rows, total_rows, day=day_text:
+                        report_page_progress(
+                            "fetching_targeting_reports",
+                            "targeting reports",
+                            day,
+                            endpoint,
+                            page,
+                            page_rows,
+                            total_rows,
+                        )
+                    ),
                 )
                 targeting_chunk = _normalize_targeting_rows(
                     report_rows=targeting_raw_rows,
@@ -1359,10 +1426,27 @@ def sync_lingxing_data(
                 report_fetch_progress("fetching_targeting_reports", "targeting reports")
 
             if day_text in missing_negative_days_set:
+                report_fetch_start(
+                    "fetching_negative_targeting_reports",
+                    "negative targeting reports",
+                    day_text,
+                )
                 negative_raw_rows = client.fetch_negative_targeting_reports_for_day(
                     access_token=access_token,
                     sid=sid,
                     report_date=day_text,
+                    page_progress_cb=(
+                        lambda endpoint, page, page_rows, total_rows, day=day_text:
+                        report_page_progress(
+                            "fetching_negative_targeting_reports",
+                            "negative targeting reports",
+                            day,
+                            endpoint,
+                            page,
+                            page_rows,
+                            total_rows,
+                        )
+                    ),
                 )
                 negative_chunk = _normalize_negative_targeting_rows(
                     report_rows=negative_raw_rows,
@@ -1385,10 +1469,23 @@ def sync_lingxing_data(
                 )
 
             if day_text in missing_ads_days_set:
+                report_fetch_start("fetching_ads_reports", "ads reports", day_text)
                 ads_raw_rows = client.fetch_ads_reports_for_day(
                     access_token=access_token,
                     sid=sid,
                     report_date=day_text,
+                    page_progress_cb=(
+                        lambda endpoint, page, page_rows, total_rows, day=day_text:
+                        report_page_progress(
+                            "fetching_ads_reports",
+                            "ads reports",
+                            day,
+                            endpoint,
+                            page,
+                            page_rows,
+                            total_rows,
+                        )
+                    ),
                 )
                 ads_chunk = _normalize_ads_rows(
                     report_rows=ads_raw_rows,
@@ -1410,11 +1507,25 @@ def sync_lingxing_data(
         op_logs: List[Dict[str, Any]] = []
         new_full_change_records: List[Dict[str, Any]] = []
         for chunk_start, chunk_end in change_ranges:
+            chunk_scope = f"{chunk_start.isoformat()}~{chunk_end.isoformat()}"
+            report_fetch_start("fetching_change_logs", "operation logs", chunk_scope)
             chunk_logs = client.fetch_operation_logs(
                 access_token=access_token,
                 sid=sid,
                 start_date=chunk_start.isoformat(),
                 end_date=chunk_end.isoformat(),
+                page_progress_cb=(
+                    lambda endpoint, page, page_rows, total_rows, scope=chunk_scope:
+                    report_page_progress(
+                        "fetching_change_logs",
+                        "operation logs",
+                        scope,
+                        endpoint,
+                        page,
+                        page_rows,
+                        total_rows,
+                    )
+                ),
             )
             op_logs.extend(chunk_logs)
             change_chunk = _build_full_change_records(
