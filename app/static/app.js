@@ -157,6 +157,13 @@ const I18N = {
       adviceEmpty: 'No advice generated yet.',
       syncSummaryEmpty: 'Lingxing sync has not run yet.',
       syncSummaryLabel: 'Lingxing Sync Summary',
+      syncRangeTotals: 'Selected Date Range Total',
+      syncTotalClicks: 'Clicks',
+      syncTotalSpend: 'Total Cost',
+      syncTotalSales: 'Sales',
+      syncTotalAcos: 'ACoS',
+      syncTotalAdGroups: 'Ad Groups with Spend',
+      syncTotalDays: 'Days',
       storeNotSyncedHint: 'Selected store has no local data yet. Run Lingxing sync first.',
       syncTable: {
         adCombo: 'Ad Type',
@@ -337,6 +344,13 @@ const I18N = {
       adviceEmpty: '暂未生成建议。',
       syncSummaryEmpty: '尚未执行领星同步。',
       syncSummaryLabel: '领星同步结果',
+      syncRangeTotals: '所选日期区间总计',
+      syncTotalClicks: '点击次数',
+      syncTotalSpend: '总花费',
+      syncTotalSales: '销售额',
+      syncTotalAcos: 'ACoS',
+      syncTotalAdGroups: '有消耗广告组',
+      syncTotalDays: '天数',
       storeNotSyncedHint: '当前店铺还没有本地数据，请先执行领星同步。',
       syncTable: {
         adCombo: '广告组合',
@@ -936,6 +950,8 @@ function App() {
   const [whitepaperStorageSummary, setWhitepaperStorageSummary] = useState('');
   const [syncSummary, setSyncSummary] = useState('');
   const [syncRows, setSyncRows] = useState([]);
+  const [syncTotals, setSyncTotals] = useState(null);
+  const [syncWindow, setSyncWindow] = useState(null);
   const [syncSortKey, setSyncSortKey] = useState('campaign');
   const [syncSortDir, setSyncSortDir] = useState('asc');
   const [syncStartDate, setSyncStartDate] = useState('');
@@ -993,8 +1009,28 @@ function App() {
   const applyLingxingSyncResult = async (syncRes, activeStoreId) => {
     const summary = JSON.stringify(syncRes || {}, null, 2);
     setSyncSummary(summary);
-    const tableRows = ((syncRes?.stores) || []).flatMap((store) => store.lingxing_output_rows || []);
+    const stores = (syncRes?.stores) || [];
+    const selectedStoreResult = stores.find((item) => item.store_id === activeStoreId) || stores[0] || null;
+    const tableRows = selectedStoreResult?.lingxing_output_rows || [];
     setSyncRows(tableRows);
+    setSyncWindow(syncRes?.window || null);
+    if (selectedStoreResult?.selected_range_totals) {
+      setSyncTotals(selectedStoreResult.selected_range_totals);
+    } else {
+      const clicks = tableRows.reduce((acc, item) => acc + Number(item.clicks || 0), 0);
+      const spend = tableRows.reduce((acc, item) => acc + Number(item.spend || 0), 0);
+      const sales = tableRows.reduce((acc, item) => acc + Number(item.sales || 0), 0);
+      setSyncTotals({
+        start_date: syncRes?.window?.start_date || '',
+        end_date: syncRes?.window?.end_date || '',
+        days: 0,
+        clicks,
+        spend: Number(spend.toFixed(2)),
+        sales: Number(sales.toFixed(2)),
+        acos: sales > 0 ? Number(((spend / sales) * 100).toFixed(2)) : 0,
+        ad_groups_with_spend: tableRows.length,
+      });
+    }
     setSyncSortKey('campaign');
     setSyncSortDir('asc');
 
@@ -1593,6 +1629,8 @@ function App() {
     setSyncJobStatus(null);
     setSyncSummary('');
     setSyncRows([]);
+    setSyncTotals(null);
+    setSyncWindow(null);
     setSelectedMessageId(null);
     setMailAttachmentMap({});
   }, [selectedStore]);
@@ -2414,6 +2452,19 @@ function App() {
                         }`
                       : t.playbook.syncJobIdle}
                   </p>
+                  ${syncTotals
+                    ? html`
+                        <p className="mt-2 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">
+                          ${t.playbook.syncRangeTotals}: ${(syncTotals.start_date || syncWindow?.start_date || '-')} ~ ${(syncTotals.end_date || syncWindow?.end_date || '-')}
+                          | ${t.playbook.syncTotalDays}: ${syncTotals.days ?? '-'}
+                          | ${t.playbook.syncTotalClicks}: ${syncTotals.clicks ?? 0}
+                          | ${t.playbook.syncTotalSpend}: ${fmtMoney(syncTotals.spend ?? 0, language)}
+                          | ${t.playbook.syncTotalSales}: ${fmtMoney(syncTotals.sales ?? 0, language)}
+                          | ${t.playbook.syncTotalAcos}: ${fmtPct(syncTotals.acos ?? 0)}
+                          | ${t.playbook.syncTotalAdGroups}: ${syncTotals.ad_groups_with_spend ?? 0}
+                        </p>
+                      `
+                    : null}
                   ${syncSummary
                     ? html`<${LingxingSyncTable}
                         rows=${syncRows}

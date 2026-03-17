@@ -1699,6 +1699,20 @@ def sync_lingxing_data(
             bid_snapshots=bid_snapshots,
             campaign_name_map=campaign_name_map,
         )
+        total_clicks = int(sum(int(item.get("clicks", 0) or 0) for item in daily_rows))
+        total_spend = round(sum(float(item.get("spend", 0) or 0) for item in daily_rows), 2)
+        total_sales = round(sum(float(item.get("sales", 0) or 0) for item in daily_rows), 2)
+        total_acos = round((total_spend / total_sales) * 100, 2) if total_sales > 0 else 0.0
+        selected_range_totals = {
+            "start_date": window.start_date.isoformat(),
+            "end_date": window.end_date.isoformat(),
+            "days": len(requested_days),
+            "clicks": total_clicks,
+            "spend": total_spend,
+            "sales": total_sales,
+            "acos": total_acos,
+            "ad_groups_with_spend": len(lingxing_output_rows),
+        }
 
         full_dataset_payload = {
             "store_id": store_id,
@@ -1744,6 +1758,7 @@ def sync_lingxing_data(
                 "negative_targeting_rows": len(negative_targeting_rows_all),
                 "ads_rows": len(ads_rows_all),
                 "campaign_daily_rows": len(campaign_daily_rows_all),
+                "selected_range_totals": selected_range_totals,
                 "local_cache_hit_days": {
                     "ad_group_reports": len(requested_days) - len(missing_ad_days),
                     "targeting": len(requested_days) - len(missing_targeting_days),
