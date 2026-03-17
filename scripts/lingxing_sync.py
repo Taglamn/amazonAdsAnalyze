@@ -17,6 +17,11 @@ def main() -> None:
     parser.add_argument("--start-date", help="Start date in YYYY-MM-DD", default=None)
     parser.add_argument("--end-date", help="End date in YYYY-MM-DD", default=None)
     parser.add_argument(
+        "--force-refetch-before-date",
+        help="Force re-fetch dates <= this YYYY-MM-DD, ignoring local coverage cache",
+        default=None,
+    )
+    parser.add_argument(
         "--no-persist",
         action="store_true",
         help="Do not write synced data to app/data/*.csv",
@@ -28,6 +33,7 @@ def main() -> None:
         report_date=args.report_date,
         start_date=args.start_date,
         end_date=args.end_date,
+        force_refetch_before_date=args.force_refetch_before_date,
         persist=not args.no_persist,
     )
 

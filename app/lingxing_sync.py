@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -13,6 +14,20 @@ import pandas as pd
 from .analysis import build_bid_recommendations, build_optimization_cases
 from .data_access import DATA_DIR, HISTORY_DIR, PERFORMANCE_DIR, PLAYBOOK_DIR
 from .lingxing_client import LingxingClient, LingxingCredentials
+
+_COVERAGE_CATEGORIES = (
+    "ad_group_reports",
+    "targeting",
+    "negative_targeting",
+    "ads",
+    "change_logs",
+)
+_EMPTY_GUARD_CATEGORIES = (
+    "ad_group_reports",
+    "targeting",
+    "negative_targeting",
+    "ads",
+)
 
 
 @dataclass
@@ -661,13 +676,8 @@ def _empty_coverage_index(store_id: str, store_name: str) -> Dict[str, Any]:
         "store_id": store_id,
         "store_name": store_name,
         "updated_at": "",
-        "coverage": {
-            "ad_group_reports": [],
-            "targeting": [],
-            "negative_targeting": [],
-            "ads": [],
-            "change_logs": [],
-        },
+        "coverage": {key: [] for key in _COVERAGE_CATEGORIES},
+        "empty_tracking": {key: {} for key in _EMPTY_GUARD_CATEGORIES},
     }
 
 
@@ -676,12 +686,44 @@ def _normalize_coverage_index(payload: Dict[str, Any], store_id: str, store_name
     payload.setdefault("store_name", store_name)
     payload.setdefault("updated_at", "")
     coverage = payload.setdefault("coverage", {})
-    for key in ("ad_group_reports", "targeting", "negative_targeting", "ads", "change_logs"):
+    for key in _COVERAGE_CATEGORIES:
         values = coverage.get(key)
         if isinstance(values, list):
             coverage[key] = _sort_unique_dates([str(item) for item in values])
         else:
             coverage[key] = []
+
+    empty_tracking = payload.setdefault("empty_tracking", {})
+    if not isinstance(empty_tracking, dict):
+        empty_tracking = {}
+        payload["empty_tracking"] = empty_tracking
+
+    for key in _EMPTY_GUARD_CATEGORIES:
+        category_tracking = empty_tracking.get(key)
+        if not isinstance(category_tracking, dict):
+            category_tracking = {}
+
+        normalized_tracking: Dict[str, Dict[str, Any]] = {}
+        for day_text, detail in category_tracking.items():
+            if not isinstance(detail, dict):
+                continue
+            day = str(day_text).strip()[:10]
+            if not day:
+                continue
+            count_raw = detail.get("consecutive_empty", 0)
+            try:
+                count = max(0, int(count_raw))
+            except (TypeError, ValueError):
+                count = 0
+            status = str(detail.get("status") or "").strip() or "pending"
+            if status not in {"pending", "empty_suspect", "empty_confirmed"}:
+                status = "pending"
+            normalized_tracking[day] = {
+                "consecutive_empty": count,
+                "status": status,
+                "last_checked_at": str(detail.get("last_checked_at") or ""),
+            }
+        empty_tracking[key] = normalized_tracking
     return payload
 
 
@@ -850,6 +892,139 @@ def _mark_coverage_days(
     coverage = local_dataset.setdefault("coverage", {})
     existing = list(coverage.get(category, []))
     coverage[category] = _sort_unique_dates(existing + days)
+
+
+def _drop_coverage_days(
+    local_dataset: Dict[str, Any],
+    category: str,
+    days: List[str],
+) -> None:
+    day_set = {str(day).strip()[:10] for day in days if str(day).strip()}
+    if not day_set:
+        return
+    coverage = local_dataset.setdefault("coverage", {})
+    existing = [str(item).strip()[:10] for item in coverage.get(category, [])]
+    coverage[category] = _sort_unique_dates([item for item in existing if item and item not in day_set])
+
+
+def _clear_empty_tracking_day(local_dataset: Dict[str, Any], category: str, day_text: str) -> None:
+    tracking = local_dataset.setdefault("empty_tracking", {})
+    category_tracking = tracking.setdefault(category, {})
+    if isinstance(category_tracking, dict):
+        category_tracking.pop(str(day_text).strip()[:10], None)
+
+
+def _clear_empty_tracking_days(
+    local_dataset: Dict[str, Any],
+    categories: Tuple[str, ...],
+    days: List[str],
+) -> None:
+    for category in categories:
+        for day_text in days:
+            _clear_empty_tracking_day(local_dataset, category, day_text)
+
+
+def _register_empty_tracking(
+    local_dataset: Dict[str, Any],
+    category: str,
+    day_text: str,
+    confirm_retries: int,
+) -> Dict[str, Any]:
+    day = str(day_text).strip()[:10]
+    tracking = local_dataset.setdefault("empty_tracking", {})
+    category_tracking = tracking.setdefault(category, {})
+    if not isinstance(category_tracking, dict):
+        category_tracking = {}
+        tracking[category] = category_tracking
+
+    prev = category_tracking.get(day)
+    prev_count = 0
+    if isinstance(prev, dict):
+        try:
+            prev_count = max(0, int(prev.get("consecutive_empty", 0)))
+        except (TypeError, ValueError):
+            prev_count = 0
+    count = prev_count + 1
+
+    if count >= confirm_retries:
+        status = "empty_confirmed"
+    elif count == 1:
+        status = "pending"
+    else:
+        status = "empty_suspect"
+
+    detail = {
+        "consecutive_empty": count,
+        "status": status,
+        "last_checked_at": datetime.utcnow().isoformat(),
+    }
+    category_tracking[day] = detail
+    return detail
+
+
+def _build_empty_data_guard_summary(
+    coverage_index: Dict[str, Any],
+    requested_days: List[str],
+    confirm_retries: int,
+) -> Dict[str, Any]:
+    requested_set = {str(day).strip()[:10] for day in requested_days}
+    empty_tracking = coverage_index.get("empty_tracking", {})
+    by_category: Dict[str, Dict[str, Any]] = {}
+    pending_total = 0
+    suspect_total = 0
+    confirmed_total = 0
+
+    for category in _EMPTY_GUARD_CATEGORIES:
+        category_tracking = empty_tracking.get(category)
+        if not isinstance(category_tracking, dict):
+            category_tracking = {}
+
+        pending_days: List[str] = []
+        suspect_days: List[str] = []
+        confirmed_days: List[str] = []
+        max_consecutive = 0
+
+        for day_text, detail in category_tracking.items():
+            day = str(day_text).strip()[:10]
+            if not day or day not in requested_set or not isinstance(detail, dict):
+                continue
+            status = str(detail.get("status") or "").strip()
+            try:
+                consecutive = max(0, int(detail.get("consecutive_empty", 0)))
+            except (TypeError, ValueError):
+                consecutive = 0
+            max_consecutive = max(max_consecutive, consecutive)
+
+            if status == "empty_confirmed":
+                confirmed_days.append(day)
+            elif status == "empty_suspect":
+                suspect_days.append(day)
+            elif status == "pending":
+                pending_days.append(day)
+
+        pending_days = _sort_unique_dates(pending_days)
+        suspect_days = _sort_unique_dates(suspect_days)
+        confirmed_days = _sort_unique_dates(confirmed_days)
+        pending_total += len(pending_days)
+        suspect_total += len(suspect_days)
+        confirmed_total += len(confirmed_days)
+
+        by_category[category] = {
+            "pending_days": len(pending_days),
+            "suspect_days": len(suspect_days),
+            "confirmed_days": len(confirmed_days),
+            "max_consecutive_empty": max_consecutive,
+            "sample_days": (pending_days + suspect_days + confirmed_days)[:20],
+        }
+
+    return {
+        "has_warning": bool(pending_total or suspect_total or confirmed_total),
+        "empty_confirm_retries": confirm_retries,
+        "pending_total_days": pending_total,
+        "suspect_total_days": suspect_total,
+        "confirmed_total_days": confirmed_total,
+        "by_category": by_category,
+    }
 
 
 def _build_daily_rows_from_ad_group_rows(
@@ -1199,6 +1374,7 @@ def sync_lingxing_data(
     report_date: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
+    force_refetch_before_date: str | None = None,
     persist: bool = True,
     progress_cb: Callable[[str, int, str], None] | None = None,
 ) -> Dict[str, Any]:
@@ -1213,6 +1389,14 @@ def sync_lingxing_data(
 
     report("starting", 8, "Preparing sync window")
     window = resolve_sync_window(report_date=report_date, start_date=start_date, end_date=end_date)
+    force_refetch_before_day = _parse_date_or_none(force_refetch_before_date)
+    if force_refetch_before_day and force_refetch_before_day < window.start_date:
+        force_refetch_before_day = window.start_date
+    empty_confirm_retries_raw = str(os.getenv("LINGXING_EMPTY_CONFIRM_RETRIES", "3")).strip()
+    try:
+        empty_confirm_retries = max(2, int(empty_confirm_retries_raw))
+    except ValueError:
+        empty_confirm_retries = 3
 
     credentials = LingxingCredentials.from_env()
     client = LingxingClient(credentials=credentials)
@@ -1268,6 +1452,31 @@ def sync_lingxing_data(
         negative_covered = set(str(x) for x in coverage.get("negative_targeting", []))
         ads_covered = set(str(x) for x in coverage.get("ads", []))
         change_covered = set(str(x) for x in coverage.get("change_logs", []))
+        force_refetch_days: List[str] = []
+        if force_refetch_before_day:
+            cutoff_text = min(force_refetch_before_day, window.end_date).isoformat()
+            force_refetch_days = [day for day in requested_days if day <= cutoff_text]
+            if force_refetch_days:
+                force_refetch_day_set = set(force_refetch_days)
+                ad_covered -= force_refetch_day_set
+                targeting_covered -= force_refetch_day_set
+                negative_covered -= force_refetch_day_set
+                ads_covered -= force_refetch_day_set
+                change_covered -= force_refetch_day_set
+                for category in _COVERAGE_CATEGORIES:
+                    _drop_coverage_days(coverage_index, category, force_refetch_days)
+                _clear_empty_tracking_days(
+                    coverage_index,
+                    categories=_EMPTY_GUARD_CATEGORIES,
+                    days=force_refetch_days,
+                )
+                if persist:
+                    _save_coverage_index(coverage_index)
+                report(
+                    "force_refetch",
+                    21,
+                    f"{seller_prefix} force refetch {len(force_refetch_days)} days <= {cutoff_text}",
+                )
 
         missing_ad_days = _missing_days(requested_days, ad_covered)
         missing_targeting_days = _missing_days(requested_days, targeting_covered)
@@ -1352,6 +1561,58 @@ def sync_lingxing_data(
         new_targeting_rows: List[Dict[str, Any]] = []
         new_negative_rows: List[Dict[str, Any]] = []
         new_ads_rows: List[Dict[str, Any]] = []
+
+        def persist_guarded_day_chunk(
+            *,
+            category: str,
+            day_text: str,
+            rows: List[Dict[str, Any]],
+            stage: str,
+            label: str,
+        ) -> None:
+            if not persist:
+                return
+
+            if rows:
+                _save_day_shard(
+                    store_id=store_id,
+                    category=category,
+                    day_text=day_text,
+                    rows=rows,
+                )
+                _mark_coverage_days(coverage_index, category, [day_text])
+                _clear_empty_tracking_day(coverage_index, category, day_text)
+                _save_coverage_index(coverage_index)
+                return
+
+            empty_detail = _register_empty_tracking(
+                coverage_index,
+                category=category,
+                day_text=day_text,
+                confirm_retries=empty_confirm_retries,
+            )
+            status = str(empty_detail.get("status") or "pending")
+            retry_count = int(empty_detail.get("consecutive_empty") or 1)
+
+            if status == "empty_confirmed":
+                _save_day_shard(
+                    store_id=store_id,
+                    category=category,
+                    day_text=day_text,
+                    rows=[],
+                )
+                _mark_coverage_days(coverage_index, category, [day_text])
+
+            _save_coverage_index(coverage_index)
+            report(
+                stage,
+                max(22, current_fetch_pct()),
+                (
+                    f"{seller_prefix} {label} {day_text} empty response -> {status} "
+                    f"(retry {retry_count}/{empty_confirm_retries})"
+                ),
+            )
+
         for day_text in requested_days:
             if day_text in missing_ad_days_set:
                 report_fetch_start("fetching_ad_group_reports", "ad-group reports", day_text)
@@ -1378,15 +1639,13 @@ def sync_lingxing_data(
                     campaign_name_map=campaign_name_map,
                 )
                 new_ad_group_rows.extend(ad_group_chunk)
-                if persist:
-                    _save_day_shard(
-                        store_id=store_id,
-                        category="ad_group_reports",
-                        day_text=day_text,
-                        rows=ad_group_chunk,
-                    )
-                    _mark_coverage_days(coverage_index, "ad_group_reports", [day_text])
-                    _save_coverage_index(coverage_index)
+                persist_guarded_day_chunk(
+                    category="ad_group_reports",
+                    day_text=day_text,
+                    rows=ad_group_chunk,
+                    stage="fetching_ad_group_reports",
+                    label="ad-group reports",
+                )
                 report_fetch_progress("fetching_ad_group_reports", "ad-group reports")
 
             if day_text in missing_targeting_days_set:
@@ -1414,15 +1673,13 @@ def sync_lingxing_data(
                     campaign_name_map=campaign_name_map,
                 )
                 new_targeting_rows.extend(targeting_chunk)
-                if persist:
-                    _save_day_shard(
-                        store_id=store_id,
-                        category="targeting",
-                        day_text=day_text,
-                        rows=targeting_chunk,
-                    )
-                    _mark_coverage_days(coverage_index, "targeting", [day_text])
-                    _save_coverage_index(coverage_index)
+                persist_guarded_day_chunk(
+                    category="targeting",
+                    day_text=day_text,
+                    rows=targeting_chunk,
+                    stage="fetching_targeting_reports",
+                    label="targeting reports",
+                )
                 report_fetch_progress("fetching_targeting_reports", "targeting reports")
 
             if day_text in missing_negative_days_set:
@@ -1454,15 +1711,13 @@ def sync_lingxing_data(
                     campaign_name_map=campaign_name_map,
                 )
                 new_negative_rows.extend(negative_chunk)
-                if persist:
-                    _save_day_shard(
-                        store_id=store_id,
-                        category="negative_targeting",
-                        day_text=day_text,
-                        rows=negative_chunk,
-                    )
-                    _mark_coverage_days(coverage_index, "negative_targeting", [day_text])
-                    _save_coverage_index(coverage_index)
+                persist_guarded_day_chunk(
+                    category="negative_targeting",
+                    day_text=day_text,
+                    rows=negative_chunk,
+                    stage="fetching_negative_targeting_reports",
+                    label="negative targeting reports",
+                )
                 report_fetch_progress(
                     "fetching_negative_targeting_reports",
                     "negative targeting reports",
@@ -1493,15 +1748,13 @@ def sync_lingxing_data(
                     campaign_name_map=campaign_name_map,
                 )
                 new_ads_rows.extend(ads_chunk)
-                if persist:
-                    _save_day_shard(
-                        store_id=store_id,
-                        category="ads",
-                        day_text=day_text,
-                        rows=ads_chunk,
-                    )
-                    _mark_coverage_days(coverage_index, "ads", [day_text])
-                    _save_coverage_index(coverage_index)
+                persist_guarded_day_chunk(
+                    category="ads",
+                    day_text=day_text,
+                    rows=ads_chunk,
+                    stage="fetching_ads_reports",
+                    label="ads reports",
+                )
                 report_fetch_progress("fetching_ads_reports", "ads reports")
 
         op_logs: List[Dict[str, Any]] = []
@@ -1557,6 +1810,21 @@ def sync_lingxing_data(
 
         if total_fetch_units <= 0:
             report("using_local_cache", 72, f"{seller_prefix} no missing days, using local cache")
+        empty_data_guard = _build_empty_data_guard_summary(
+            coverage_index=coverage_index,
+            requested_days=requested_days,
+            confirm_retries=empty_confirm_retries,
+        )
+        if empty_data_guard.get("has_warning"):
+            report(
+                "empty_data_guard",
+                74,
+                (
+                    f"{seller_prefix} empty-data guard warning: pending={empty_data_guard.get('pending_total_days', 0)}, "
+                    f"suspect={empty_data_guard.get('suspect_total_days', 0)}, "
+                    f"confirmed={empty_data_guard.get('confirmed_total_days', 0)}"
+                ),
+            )
 
         report("merging_local_cache", 76, f"{seller_prefix} local cache checkpointed")
 
@@ -1759,6 +2027,7 @@ def sync_lingxing_data(
                 "ads_rows": len(ads_rows_all),
                 "campaign_daily_rows": len(campaign_daily_rows_all),
                 "selected_range_totals": selected_range_totals,
+                "empty_data_guard": empty_data_guard,
                 "local_cache_hit_days": {
                     "ad_group_reports": len(requested_days) - len(missing_ad_days),
                     "targeting": len(requested_days) - len(missing_targeting_days),
@@ -1773,6 +2042,7 @@ def sync_lingxing_data(
                     "ads": len(missing_ads_days),
                     "change_logs": len(missing_change_days),
                 },
+                "force_refetch_before_date": force_refetch_before_day.isoformat() if force_refetch_before_day else None,
                 "full_dataset_path": full_dataset_path,
                 "lingxing_output_rows": lingxing_output_rows,
                 "latest_performance": latest_perf,
@@ -1788,6 +2058,7 @@ def sync_lingxing_data(
             "start_date": window.start_date.isoformat(),
             "end_date": window.end_date.isoformat(),
         },
+        "force_refetch_before_date": force_refetch_before_day.isoformat() if force_refetch_before_day else None,
         "stores_total": len(sellers),
         "stores_ads_enabled": len(valid_sellers),
         "stores_synced": len(store_results),

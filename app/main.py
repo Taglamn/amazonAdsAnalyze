@@ -90,6 +90,7 @@ class LingxingSyncRequest(BaseModel):
     report_date: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    force_refetch_before_date: Optional[str] = None
     persist: bool = True
 
 
@@ -98,6 +99,7 @@ class LingxingSyncJobRequest(BaseModel):
     report_date: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    force_refetch_before_date: Optional[str] = None
     persist: bool = True
 
 
@@ -570,6 +572,7 @@ def sync_lingxing(
             report_date=payload.report_date,
             start_date=payload.start_date,
             end_date=payload.end_date,
+            force_refetch_before_date=payload.force_refetch_before_date,
             persist=payload.persist,
         )
         if payload.persist:
@@ -593,6 +596,7 @@ def create_lingxing_sync_job(
         report_date: Optional[str],
         start_date: Optional[str],
         end_date: Optional[str],
+        force_refetch_before_date: Optional[str],
         persist: bool,
         progress_cb: Any = None,
     ) -> Dict[str, Any]:
@@ -601,6 +605,7 @@ def create_lingxing_sync_job(
             report_date=report_date,
             start_date=start_date,
             end_date=end_date,
+            force_refetch_before_date=force_refetch_before_date,
             persist=persist,
             progress_cb=progress_cb,
         )
@@ -614,6 +619,7 @@ def create_lingxing_sync_job(
             report_date=payload.report_date,
             start_date=payload.start_date,
             end_date=payload.end_date,
+            force_refetch_before_date=payload.force_refetch_before_date,
             persist=payload.persist,
             sync_func=_sync_runner,
         )

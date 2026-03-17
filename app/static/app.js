@@ -125,6 +125,11 @@ const I18N = {
       syncDateRangeLabel: 'Lingxing Sync Date Range',
       syncStartDate: 'Start Date',
       syncEndDate: 'End Date',
+      syncQuick30: 'Last 30 Days',
+      syncQuick60: 'Last 60 Days',
+      syncQuickClear: 'Clear',
+      forceRefetchBeforeDate: 'Force Re-fetch Before Date',
+      forceRefetchBeforeDateHint: 'Re-fetch all dates <= this date even if local cache exists.',
       syncDateHint: 'Leave both empty for default recent 365 days.',
       syncDateInvalid: 'Please set both start and end dates, and ensure start <= end.',
       syncCurrentStoreOnly: 'Only the currently selected store will be synced.',
@@ -189,6 +194,17 @@ const I18N = {
       syncJobStage: 'Stage',
       syncJobUpdatedAt: 'Last Update',
       syncJobNetworkRetry: 'Network unstable while polling. Task is still running on server; retrying...',
+      emptyGuardTitle: 'Historical Data Warning',
+      emptyGuardSummary: 'Some historical dates returned empty payloads and were guarded to avoid silent zero overwrite.',
+      emptyGuardPending: 'Pending',
+      emptyGuardSuspect: 'Suspect',
+      emptyGuardConfirmed: 'Confirmed Empty',
+      emptyGuardCategory: {
+        ad_group_reports: 'Ad Group Reports',
+        targeting: 'Targeting',
+        negative_targeting: 'Negative Targeting',
+        ads: 'Ads',
+      },
       contextStoreHint: 'Context Package supports Lingxing stores only (store_id should start with lingxing_).',
       contextJobLabel: 'Context Package Export Task',
       contextJobIdle: 'No context export task is running.',
@@ -312,6 +328,11 @@ const I18N = {
       syncDateRangeLabel: '领星同步日期筛选',
       syncStartDate: '开始日期',
       syncEndDate: '结束日期',
+      syncQuick30: '近30天',
+      syncQuick60: '近60天',
+      syncQuickClear: '清空',
+      forceRefetchBeforeDate: '强制重拉截止日期',
+      forceRefetchBeforeDateHint: '即使本地有缓存，也会对该日期及更早日期重新拉取。',
       syncDateHint: '开始和结束都留空时，默认同步最近 365 天。',
       syncDateInvalid: '请同时填写开始/结束日期，并确保开始日期不晚于结束日期。',
       syncCurrentStoreOnly: '仅同步当前已选店铺的数据。',
@@ -376,6 +397,17 @@ const I18N = {
       syncJobStage: '阶段',
       syncJobUpdatedAt: '最后更新时间',
       syncJobNetworkRetry: '轮询网络异常，任务仍在服务器后台运行，正在重试...',
+      emptyGuardTitle: '历史数据告警',
+      emptyGuardSummary: '部分历史日期返回空数据，系统已启用保护，避免静默覆盖成 0。',
+      emptyGuardPending: '待确认',
+      emptyGuardSuspect: '疑似空返回',
+      emptyGuardConfirmed: '确认空返回',
+      emptyGuardCategory: {
+        ad_group_reports: '广告组日报',
+        targeting: '定向报表',
+        negative_targeting: '否定定向报表',
+        ads: '广告报表',
+      },
       contextStoreHint: 'Context Package 仅支持领星店铺（store_id 需以 lingxing_ 开头）。',
       contextJobLabel: 'Context Package 导出任务',
       contextJobIdle: '当前没有进行中的导出任务。',
@@ -956,7 +988,9 @@ function App() {
   const [syncSortDir, setSyncSortDir] = useState('asc');
   const [syncStartDate, setSyncStartDate] = useState('');
   const [syncEndDate, setSyncEndDate] = useState('');
+  const [forceRefetchBeforeDate, setForceRefetchBeforeDate] = useState('');
   const [syncJobStatus, setSyncJobStatus] = useState(null);
+  const [syncEmptyGuard, setSyncEmptyGuard] = useState(null);
   const [contextJobStatus, setContextJobStatus] = useState(null);
   const [adminUsers, setAdminUsers] = useState([]);
   const [adminStores, setAdminStores] = useState([]);
@@ -1001,6 +1035,22 @@ function App() {
 
   const fileTimeTag = () => new Date().toISOString().replace(/[:.]/g, '-');
 
+  const toDateInput = (dt) => {
+    const year = dt.getFullYear();
+    const month = String(dt.getMonth() + 1).padStart(2, '0');
+    const day = String(dt.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const applyQuickSyncRange = (days) => {
+    const end = new Date();
+    end.setDate(end.getDate() - 1);
+    const start = new Date(end);
+    start.setDate(start.getDate() - Math.max(1, days) + 1);
+    setSyncStartDate(toDateInput(start));
+    setSyncEndDate(toDateInput(end));
+  };
+
   const stopSyncPolling = () => {
     syncPollNonceRef.current += 1;
     syncPollingJobIdRef.current = '';
@@ -1014,6 +1064,7 @@ function App() {
     const tableRows = selectedStoreResult?.lingxing_output_rows || [];
     setSyncRows(tableRows);
     setSyncWindow(syncRes?.window || null);
+    setSyncEmptyGuard(selectedStoreResult?.empty_data_guard || null);
     if (selectedStoreResult?.selected_range_totals) {
       setSyncTotals(selectedStoreResult.selected_range_totals);
     } else {
@@ -1631,6 +1682,8 @@ function App() {
     setSyncRows([]);
     setSyncTotals(null);
     setSyncWindow(null);
+    setSyncEmptyGuard(null);
+    setForceRefetchBeforeDate('');
     setSelectedMessageId(null);
     setMailAttachmentMap({});
   }, [selectedStore]);
@@ -1820,6 +1873,7 @@ function App() {
     setError('');
     setSyncRows([]);
     setSyncSummary('');
+    setSyncEmptyGuard(null);
     setSyncJobStatus({
       status: 'queued',
       progress_pct: 0,
@@ -1831,6 +1885,9 @@ function App() {
       if (syncStartDate && syncEndDate) {
         requestBody.start_date = syncStartDate;
         requestBody.end_date = syncEndDate;
+      }
+      if (forceRefetchBeforeDate) {
+        requestBody.force_refetch_before_date = forceRefetchBeforeDate;
       }
 
       const createResp = await fetchJson(
@@ -2358,6 +2415,42 @@ function App() {
                         />
                       </label>
                     </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick=${() => applyQuickSyncRange(30)}
+                        className="rounded-md border border-brand-300 bg-white px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50"
+                      >
+                        ${t.playbook.syncQuick30}
+                      </button>
+                      <button
+                        type="button"
+                        onClick=${() => applyQuickSyncRange(60)}
+                        className="rounded-md border border-brand-300 bg-white px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50"
+                      >
+                        ${t.playbook.syncQuick60}
+                      </button>
+                      <button
+                        type="button"
+                        onClick=${() => {
+                          setSyncStartDate('');
+                          setSyncEndDate('');
+                        }}
+                        className="rounded-md border border-brand-300 bg-white px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50"
+                      >
+                        ${t.playbook.syncQuickClear}
+                      </button>
+                    </div>
+                    <label className="mt-3 block">
+                      <span className="mb-1 block text-xs font-medium text-brand-700">${t.playbook.forceRefetchBeforeDate}</span>
+                      <input
+                        type="date"
+                        value=${forceRefetchBeforeDate}
+                        onChange=${(e) => setForceRefetchBeforeDate(e.target.value)}
+                        className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
+                      />
+                      <span className="mt-1 block text-xs text-brand-600">${t.playbook.forceRefetchBeforeDateHint}</span>
+                    </label>
                   </div>
                   <div className="mt-4 rounded-lg border border-brand-100 bg-brand-50 p-3">
                     <label className="block text-sm font-semibold text-brand-800">${t.playbook.uploadLabel}</label>
@@ -2463,6 +2556,27 @@ function App() {
                           | ${t.playbook.syncTotalAcos}: ${fmtPct(syncTotals.acos ?? 0)}
                           | ${t.playbook.syncTotalAdGroups}: ${syncTotals.ad_groups_with_spend ?? 0}
                         </p>
+                      `
+                    : null}
+                  ${syncEmptyGuard?.has_warning
+                    ? html`
+                        <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                          <p className="font-semibold">${t.playbook.emptyGuardTitle}</p>
+                          <p className="mt-1">
+                            ${t.playbook.emptyGuardSummary}
+                            | ${t.playbook.emptyGuardPending}: ${syncEmptyGuard.pending_total_days ?? 0}
+                            | ${t.playbook.emptyGuardSuspect}: ${syncEmptyGuard.suspect_total_days ?? 0}
+                            | ${t.playbook.emptyGuardConfirmed}: ${syncEmptyGuard.confirmed_total_days ?? 0}
+                          </p>
+                          ${Object.entries(syncEmptyGuard.by_category || {}).map(([category, detail]) => html`
+                            <p key=${category} className="mt-1 text-xs">
+                              ${(t.playbook.emptyGuardCategory || {})[category] || category}:
+                              ${t.playbook.emptyGuardPending} ${detail?.pending_days ?? 0},
+                              ${t.playbook.emptyGuardSuspect} ${detail?.suspect_days ?? 0},
+                              ${t.playbook.emptyGuardConfirmed} ${detail?.confirmed_days ?? 0}
+                            </p>
+                          `)}
+                        </div>
                       `
                     : null}
                   ${syncSummary

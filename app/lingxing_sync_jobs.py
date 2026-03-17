@@ -34,6 +34,7 @@ class LingxingSyncJob:
     report_date: Optional[str]
     start_date: Optional[str]
     end_date: Optional[str]
+    force_refetch_before_date: Optional[str]
     persist: bool
     status: str
     progress_pct: int
@@ -73,6 +74,7 @@ class LingxingSyncJobManager:
             "report_date": job.report_date,
             "start_date": job.start_date,
             "end_date": job.end_date,
+            "force_refetch_before_date": job.force_refetch_before_date,
             "persist": bool(job.persist),
             "status": job.status,
             "progress_pct": int(job.progress_pct),
@@ -97,6 +99,7 @@ class LingxingSyncJobManager:
             report_date=payload.get("report_date"),
             start_date=payload.get("start_date"),
             end_date=payload.get("end_date"),
+            force_refetch_before_date=payload.get("force_refetch_before_date"),
             persist=bool(payload.get("persist", True)),
             status=str(payload.get("status") or "failed"),
             progress_pct=int(payload.get("progress_pct") or 0),
@@ -263,6 +266,7 @@ class LingxingSyncJobManager:
         report_date: Optional[str],
         start_date: Optional[str],
         end_date: Optional[str],
+        force_refetch_before_date: Optional[str],
         persist: bool,
         sync_func: Callable[..., Dict[str, Any]],
     ) -> Dict[str, Any]:
@@ -276,6 +280,7 @@ class LingxingSyncJobManager:
                 report_date=report_date,
                 start_date=start_date,
                 end_date=end_date,
+                force_refetch_before_date=force_refetch_before_date,
                 persist=persist,
                 status="queued",
                 progress_pct=0,
@@ -299,6 +304,7 @@ class LingxingSyncJobManager:
             report_date = job.report_date
             start_date = job.start_date
             end_date = job.end_date
+            force_refetch_before_date = job.force_refetch_before_date
             persist = job.persist
 
         self._update_job(
@@ -338,6 +344,7 @@ class LingxingSyncJobManager:
                 report_date=report_date,
                 start_date=start_date,
                 end_date=end_date,
+                force_refetch_before_date=force_refetch_before_date,
                 persist=persist,
                 progress_cb=progress_cb,
             )
