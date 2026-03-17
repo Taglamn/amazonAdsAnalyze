@@ -41,6 +41,7 @@ class LingxingCredentials:
     timeout_seconds: int = 90
     max_retries: int = 3
     retry_backoff_seconds: float = 1.5
+    max_pages: int = 2000
     tls_mode: str = "default"
     proxy_url: str = ""
     insecure_skip_verify: bool = False
@@ -59,6 +60,7 @@ class LingxingCredentials:
             timeout_seconds=int(os.getenv("LINGXING_TIMEOUT_SECONDS", "90")),
             max_retries=max(1, int(os.getenv("LINGXING_MAX_RETRIES", "3"))),
             retry_backoff_seconds=float(os.getenv("LINGXING_RETRY_BACKOFF_SECONDS", "1.5")),
+            max_pages=max(10, int(os.getenv("LINGXING_MAX_PAGES", "2000"))),
             tls_mode=os.getenv("LINGXING_TLS_MODE", "default").strip().lower(),
             proxy_url=os.getenv("LINGXING_PROXY_URL", "").strip(),
             insecure_skip_verify=os.getenv("LINGXING_INSECURE_SKIP_VERIFY", "false").strip().lower()
@@ -325,8 +327,17 @@ class LingxingClient:
         rows: List[Dict[str, Any]] = []
         offset = 0
         next_token = ""
+        seen_next_tokens: set[str] = set()
+        page_count = 0
 
         while True:
+            page_count += 1
+            if page_count > self.credentials.max_pages:
+                raise LingxingApiError(
+                    f"Lingxing pagination exceeded max pages ({self.credentials.max_pages}) "
+                    f"for path={path}. Please narrow date range or increase LINGXING_MAX_PAGES."
+                )
+
             req_body = dict(body)
             req_body["length"] = page_size
 
@@ -349,6 +360,15 @@ class LingxingClient:
 
             returned_next = str(resp.get("next_token") or "").strip()
             if returned_next:
+                if returned_next == next_token and next_token:
+                    raise LingxingApiError(
+                        f"Lingxing pagination cursor repeated for path={path} next_token={returned_next[:24]}..."
+                    )
+                if returned_next in seen_next_tokens:
+                    raise LingxingApiError(
+                        f"Lingxing pagination cursor loop detected for path={path} next_token={returned_next[:24]}..."
+                    )
+                seen_next_tokens.add(returned_next)
                 next_token = returned_next
                 if not data:
                     break
