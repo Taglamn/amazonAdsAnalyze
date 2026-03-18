@@ -59,6 +59,13 @@ const I18N = {
     userMgmt: {
       title: 'User Management',
       onlyAdmin: 'Only admin can manage users.',
+      selfPwdTitle: 'Change My Password',
+      selfPwdHint: 'This updates only your own login password.',
+      selfPwdNew: 'New Password',
+      selfPwdConfirm: 'Confirm Password',
+      selfPwdSave: 'Update Password',
+      selfPwdMismatch: 'Passwords do not match.',
+      selfPwdUpdated: 'Your password has been updated.',
       createTitle: 'Create User',
       username: 'Username',
       email: 'Email',
@@ -277,6 +284,13 @@ const I18N = {
     userMgmt: {
       title: '用户管理',
       onlyAdmin: '仅管理员可管理用户。',
+      selfPwdTitle: '修改我的密码',
+      selfPwdHint: '只会修改当前登录用户自己的密码。',
+      selfPwdNew: '新密码',
+      selfPwdConfirm: '确认新密码',
+      selfPwdSave: '更新密码',
+      selfPwdMismatch: '两次输入的密码不一致。',
+      selfPwdUpdated: '密码已更新。',
       createTitle: '新增用户',
       username: '用户名',
       email: '邮箱',
@@ -1082,6 +1096,10 @@ function App() {
   const [userStoreAccessMap, setUserStoreAccessMap] = useState({});
   const [userRoleDrafts, setUserRoleDrafts] = useState({});
   const [userPasswordDrafts, setUserPasswordDrafts] = useState({});
+  const [selfPasswordDraft, setSelfPasswordDraft] = useState('');
+  const [selfPasswordConfirmDraft, setSelfPasswordConfirmDraft] = useState('');
+  const [selfPasswordLoading, setSelfPasswordLoading] = useState(false);
+  const [selfPasswordNotice, setSelfPasswordNotice] = useState('');
   const [adminLoading, setAdminLoading] = useState(false);
   const [adminNotice, setAdminNotice] = useState('');
   const [newUserUsername, setNewUserUsername] = useState('');
@@ -1539,6 +1557,41 @@ function App() {
       setError(err.message);
     } finally {
       setAdminLoading(false);
+    }
+  };
+
+  const onChangeMyPassword = async () => {
+    const newPassword = String(selfPasswordDraft || '');
+    const confirmPassword = String(selfPasswordConfirmDraft || '');
+    if (!newPassword || !confirmPassword) {
+      setError(t.requestFailed);
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError(t.userMgmt.selfPwdMismatch);
+      return;
+    }
+    if (!authUser?.user_id) return;
+    setSelfPasswordLoading(true);
+    setSelfPasswordNotice('');
+    setError('');
+    try {
+      await fetchJson(
+        `/api/auth/users/${authUser.user_id}/password`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ new_password: newPassword }),
+        },
+        t.requestFailed,
+      );
+      setSelfPasswordDraft('');
+      setSelfPasswordConfirmDraft('');
+      setSelfPasswordNotice(t.userMgmt.selfPwdUpdated);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSelfPasswordLoading(false);
     }
   };
 
@@ -3082,6 +3135,45 @@ function App() {
         ${view === 'userManagement'
           ? html`
               <section className="space-y-4">
+                <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
+                  <h3 className="text-base font-semibold">${t.userMgmt.selfPwdTitle}</h3>
+                  <p className="mt-1 text-sm text-brand-600">${t.userMgmt.selfPwdHint}</p>
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <input
+                      type="password"
+                      name="self_new_password"
+                      autoComplete="new-password"
+                      value=${selfPasswordDraft}
+                      onChange=${(e) => setSelfPasswordDraft(e.target.value)}
+                      className="rounded-md border border-brand-200 px-3 py-2 text-sm"
+                      placeholder=${t.userMgmt.selfPwdNew}
+                    />
+                    <input
+                      type="password"
+                      name="self_confirm_password"
+                      autoComplete="new-password"
+                      value=${selfPasswordConfirmDraft}
+                      onChange=${(e) => setSelfPasswordConfirmDraft(e.target.value)}
+                      className="rounded-md border border-brand-200 px-3 py-2 text-sm"
+                      placeholder=${t.userMgmt.selfPwdConfirm}
+                    />
+                  </div>
+                  <button
+                    onClick=${onChangeMyPassword}
+                    disabled=${Boolean(selfPasswordLoading)}
+                    className=${`mt-3 rounded-md px-4 py-2 text-sm font-semibold ${
+                      selfPasswordLoading
+                        ? 'cursor-not-allowed bg-brand-200 text-white'
+                        : 'bg-brand-700 text-white hover:bg-brand-800'
+                    }`}
+                  >
+                    ${t.userMgmt.selfPwdSave}
+                  </button>
+                  ${selfPasswordNotice
+                    ? html`<p className="mt-3 rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-800">${selfPasswordNotice}</p>`
+                    : null}
+                </div>
+
                 ${authUser?.role !== 'admin'
                   ? html`<div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">${t.userMgmt.onlyAdmin}</div>`
                   : html`
