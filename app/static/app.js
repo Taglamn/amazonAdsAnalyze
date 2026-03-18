@@ -178,6 +178,8 @@ const I18N = {
       metaLabel: 'Response Meta',
       finishReason: 'Finish',
       possibleTruncate: 'Response may be truncated. Increase output tokens or regenerate.',
+      continueBtn: 'Continue',
+      continuingBtn: 'Continuing...',
       chars: 'Chars',
       lines: 'Lines',
       whitepaperEmpty: 'No auto-rule blueprint generated yet.',
@@ -403,6 +405,8 @@ const I18N = {
       metaLabel: '响应元信息',
       finishReason: '结束原因',
       possibleTruncate: '结果可能被截断，建议提高输出上限后重新生成。',
+      continueBtn: '继续生成',
+      continuingBtn: '继续生成中...',
       chars: '字符数',
       lines: '行数',
       whitepaperEmpty: '暂未生成自动规则方案。',
@@ -744,7 +748,18 @@ function downloadBlobFile(filename, blob) {
   URL.revokeObjectURL(url);
 }
 
-function TextOutputBlock({ title, text, emptyText, meta, expanded, onToggle, onExport, t }) {
+function TextOutputBlock({
+  title,
+  text,
+  emptyText,
+  meta,
+  expanded,
+  onToggle,
+  onExport,
+  onContinue,
+  continueLoading,
+  t,
+}) {
   const hasText = Boolean(text);
   const finishReason = meta?.finish_reason || '-';
   const maybeTruncated = Boolean(meta?.truncated) || finishReason === 'MAX_TOKENS';
@@ -776,6 +791,21 @@ function TextOutputBlock({ title, text, emptyText, meta, expanded, onToggle, onE
           >
             ${expanded ? t.playbook.collapse : t.playbook.expand}
           </button>
+          ${onContinue
+            ? html`
+                <button
+                  onClick=${onContinue}
+                  disabled=${!hasText || Boolean(continueLoading)}
+                  className=${`rounded-md border px-2 py-1 text-xs font-semibold ${
+                    hasText && !continueLoading
+                      ? 'border-brand-200 bg-white text-brand-700 hover:bg-brand-50'
+                      : 'border-brand-100 bg-brand-50 text-brand-300 cursor-not-allowed'
+                  }`}
+                >
+                  ${continueLoading ? t.playbook.continuingBtn : t.playbook.continueBtn}
+                </button>
+              `
+            : null}
         </div>
       </div>
       <p className="mt-2 text-xs text-brand-600">
@@ -1068,6 +1098,8 @@ function App() {
   const [advice, setAdvice] = useState('');
   const [whitepaperMeta, setWhitepaperMeta] = useState({});
   const [adviceMeta, setAdviceMeta] = useState({});
+  const [whitepaperContinuing, setWhitepaperContinuing] = useState(false);
+  const [adviceContinuing, setAdviceContinuing] = useState(false);
   const [playbookRawRules, setPlaybookRawRules] = useState({});
   const [playbookConstraintForm, setPlaybookConstraintForm] = useState(() => normalizeConstraintFormFromRules({}));
   const [playbookConstraintSaving, setPlaybookConstraintSaving] = useState(false);
@@ -1822,6 +1854,8 @@ function App() {
     setSyncWindow(null);
     setSyncEmptyGuard(null);
     setForceRefetchBeforeDate('');
+    setWhitepaperContinuing(false);
+    setAdviceContinuing(false);
     setPlaybookRawRules({});
     setPlaybookConstraintForm(normalizeConstraintFormFromRules({}));
     setPlaybookConstraintNotice('');
@@ -2211,6 +2245,65 @@ function App() {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onContinueWhitepaper = async () => {
+    if (!selectedStore || !String(whitepaper || '').trim()) return;
+    setWhitepaperContinuing(true);
+    setError('');
+    try {
+      const data = await fetchJson(
+        `/api/stores/${selectedStore}/ai/continue`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: 'whitepaper',
+            current_text: whitepaper,
+            lang: language,
+          }),
+        },
+        t.requestFailed,
+      );
+      setWhitepaper(data.text || whitepaper);
+      setWhitepaperMeta(data.meta || {});
+      const wc = data.meta?.char_count ?? 0;
+      const wl = data.meta?.line_count ?? 0;
+      setWhitepaperStorageSummary(`${t.playbook.lines}: ${wl}, ${t.playbook.chars}: ${wc}`);
+      setWhitepaperExpanded(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setWhitepaperContinuing(false);
+    }
+  };
+
+  const onContinueAdvice = async () => {
+    if (!selectedStore || !String(advice || '').trim()) return;
+    setAdviceContinuing(true);
+    setError('');
+    try {
+      const data = await fetchJson(
+        `/api/stores/${selectedStore}/ai/continue`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: 'advice',
+            current_text: advice,
+            lang: language,
+          }),
+        },
+        t.requestFailed,
+      );
+      setAdvice(data.text || advice);
+      setAdviceMeta(data.meta || {});
+      setAdviceExpanded(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdviceContinuing(false);
     }
   };
 
@@ -2939,6 +3032,8 @@ function App() {
                   expanded=${whitepaperExpanded}
                   onToggle=${() => setWhitepaperExpanded((v) => !v)}
                   onExport=${onExportWhitepaper}
+                  onContinue=${onContinueWhitepaper}
+                  continueLoading=${whitepaperContinuing}
                   t=${t}
                 />
 
@@ -2950,6 +3045,8 @@ function App() {
                   expanded=${adviceExpanded}
                   onToggle=${() => setAdviceExpanded((v) => !v)}
                   onExport=${onExportAdvice}
+                  onContinue=${onContinueAdvice}
+                  continueLoading=${adviceContinuing}
                   t=${t}
                 />
               </section>

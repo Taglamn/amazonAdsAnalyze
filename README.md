@@ -317,6 +317,7 @@ Amazon 广告分析与运营辅助平台，核心覆盖：
 
 - `POST /api/stores/{store_id}/ai/whitepaper`
 - `POST /api/stores/{store_id}/ai/advice`
+- `POST /api/stores/{store_id}/ai/continue`（从当前文本末尾继续生成）
 - `GET /api/stores/{store_id}/playbook`（读取店铺约束/规则）
 - `PUT /api/stores/{store_id}/playbook`（更新店铺约束/规则）
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -84,6 +84,13 @@ class AdviceRequest(BaseModel):
 
 
 class WhitepaperRequest(BaseModel):
+    model: Optional[str] = None
+    lang: str = "zh"
+
+
+class AIContinueRequest(BaseModel):
+    mode: Literal["whitepaper", "advice"] = "advice"
+    current_text: str
     model: Optional[str] = None
     lang: str = "zh"
 
@@ -227,6 +234,45 @@ def _build_stored_text_meta(content: str) -> Dict[str, Any]:
         "char_count": len(normalized),
         "line_count": normalized.count("\n") + 1 if normalized else 0,
     }
+
+
+def _append_without_overlap(current: str, extra: str) -> str:
+    base = (current or "").rstrip()
+    incoming = (extra or "").lstrip()
+    if not base:
+        return incoming
+    if not incoming:
+        return base
+
+    max_overlap = min(len(base), len(incoming), 400)
+    overlap = 0
+    for size in range(max_overlap, 0, -1):
+        if base[-size:] == incoming[:size]:
+            overlap = size
+            break
+    merged = base + "\n" + incoming[overlap:].lstrip()
+    return merged
+
+
+def _build_continue_prompt(mode: str, current_text: str, language: str) -> str:
+    lang = normalize_language(language)
+    lang_line = (
+        "Continue in Simplified Chinese with local Amazon ads operator wording."
+        if lang == "zh"
+        else "Continue in clear business English with Amazon ads wording."
+    )
+    doc_name = "Lingxing auto-rule blueprint" if mode == "whitepaper" else "auto-rule optimization advice"
+    tail = current_text[-6000:] if len(current_text) > 6000 else current_text
+    return (
+        f"You are continuing a {doc_name} markdown document.\n"
+        "Continue from exactly where it stopped.\n"
+        "Do not restart, do not summarize previous content, do not repeat existing lines.\n"
+        "Return continuation text only.\n"
+        f"{lang_line}\n\n"
+        "<<CURRENT_TEXT_TAIL_START>>\n"
+        f"{tail}\n"
+        "<<CURRENT_TEXT_TAIL_END>>\n"
+    )
 
 
 def _resolve_whitepaper_min_char_count() -> int:
@@ -565,6 +611,57 @@ def get_ai_whitepaper(
         "language": lang,
         "whitepaper": whitepaper,
         "whitepaper_meta": whitepaper_meta,
+    }
+
+
+@app.post("/api/stores/{store_id}/ai/continue")
+def continue_ai_output(
+    store_id: str,
+    payload: AIContinueRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    _ensure_store_scope(db, current_user, store_id)
+
+    current_text = (payload.current_text or "").strip()
+    if not current_text:
+        raise HTTPException(status_code=400, detail="current_text is required")
+
+    try:
+        lang = normalize_language(payload.lang)
+        prompt = _build_continue_prompt(
+            mode=payload.mode,
+            current_text=current_text,
+            language=lang,
+        )
+        continuation_text, continuation_meta = call_gemini_with_meta(
+            prompt=prompt,
+            model=payload.model,
+        )
+        merged_text = _append_without_overlap(current_text, continuation_text)
+        merged_meta = _build_stored_text_meta(merged_text)
+        merged_meta.update(
+            {
+                "finish_reason": continuation_meta.get("finish_reason"),
+                "finish_reasons": continuation_meta.get("finish_reasons"),
+                "truncated": continuation_meta.get("truncated", False),
+                "continuation_char_count": continuation_meta.get("char_count", 0),
+                "continuation_line_count": continuation_meta.get("line_count", 0),
+            }
+        )
+        if payload.mode == "whitepaper":
+            save_whitepaper(store_id, merged_text)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "store_id": store_id,
+        "mode": payload.mode,
+        "language": lang,
+        "text": merged_text,
+        "delta_text": continuation_text,
+        "meta": merged_meta,
+        "continuation_meta": continuation_meta,
     }
 
 
