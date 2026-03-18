@@ -130,6 +130,20 @@ const I18N = {
       syncQuickClear: 'Clear',
       forceRefetchBeforeDate: 'Force Re-fetch Before Date',
       forceRefetchBeforeDateHint: 'Re-fetch all dates <= this date even if local cache exists.',
+      constraintsTitle: 'Rule Constraints',
+      constraintsHint: 'Adjust these constraints before generating auto-rule blueprint/advice.',
+      constraintsSaveBtn: 'Save Constraints',
+      constraintsSavingBtn: 'Saving...',
+      constraintsSaved: 'Constraints saved for current store.',
+      constraintsTargetAcos: 'Target ACOS',
+      constraintsUpperAcos: 'Upper ACOS',
+      constraintsLowerAcos: 'Lower ACOS',
+      constraintsMinClicks: 'Min Clicks Threshold',
+      constraintsCvrWeight: 'CVR Weight',
+      constraintsOutlierIqrK: 'Outlier IQR K',
+      constraintsBidStepUp: 'Bid Step Up %',
+      constraintsBidStepDown: 'Bid Step Down %',
+      constraintsFocus: 'Focus Notes',
       syncDateHint: 'Leave both empty for default recent 365 days.',
       syncDateInvalid: 'Please set both start and end dates, and ensure start <= end.',
       syncCurrentStoreOnly: 'Only the currently selected store will be synced.',
@@ -333,6 +347,20 @@ const I18N = {
       syncQuickClear: '清空',
       forceRefetchBeforeDate: '强制重拉截止日期',
       forceRefetchBeforeDateHint: '即使本地有缓存，也会对该日期及更早日期重新拉取。',
+      constraintsTitle: '规则约束设置',
+      constraintsHint: '先调整约束，再生成自动规则方案/优化建议。',
+      constraintsSaveBtn: '保存约束',
+      constraintsSavingBtn: '保存中...',
+      constraintsSaved: '当前店铺约束已保存。',
+      constraintsTargetAcos: '目标 ACOS',
+      constraintsUpperAcos: 'ACOS 上限',
+      constraintsLowerAcos: 'ACOS 下限',
+      constraintsMinClicks: '最小点击阈值',
+      constraintsCvrWeight: 'CVR 权重',
+      constraintsOutlierIqrK: '异常值 IQR 系数',
+      constraintsBidStepUp: '加价步长 %',
+      constraintsBidStepDown: '降价步长 %',
+      constraintsFocus: '策略重点说明',
       syncDateHint: '开始和结束都留空时，默认同步最近 365 天。',
       syncDateInvalid: '请同时填写开始/结束日期，并确保开始日期不晚于结束日期。',
       syncCurrentStoreOnly: '仅同步当前已选店铺的数据。',
@@ -420,6 +448,52 @@ const I18N = {
     },
   },
 };
+
+const PLAYBOOK_CONSTRAINT_DEFAULTS = {
+  target_acos: '30',
+  upper_acos: '40',
+  lower_acos: '20',
+  min_clicks_threshold: '10',
+  cvr_weight: '0.35',
+  outlier_iqr_k: '1.5',
+  bid_step_up_pct: '8',
+  bid_step_down_pct: '12',
+  focus: '',
+};
+
+function normalizeConstraintFormFromRules(rules = {}) {
+  return {
+    target_acos: String(rules.target_acos ?? rules.acos_target ?? PLAYBOOK_CONSTRAINT_DEFAULTS.target_acos),
+    upper_acos: String(rules.upper_acos ?? rules.acos_limit ?? PLAYBOOK_CONSTRAINT_DEFAULTS.upper_acos),
+    lower_acos: String(rules.lower_acos ?? PLAYBOOK_CONSTRAINT_DEFAULTS.lower_acos),
+    min_clicks_threshold: String(rules.min_clicks_threshold ?? PLAYBOOK_CONSTRAINT_DEFAULTS.min_clicks_threshold),
+    cvr_weight: String(rules.cvr_weight ?? PLAYBOOK_CONSTRAINT_DEFAULTS.cvr_weight),
+    outlier_iqr_k: String(rules.outlier_iqr_k ?? PLAYBOOK_CONSTRAINT_DEFAULTS.outlier_iqr_k),
+    bid_step_up_pct: String(rules.bid_step_up_pct ?? PLAYBOOK_CONSTRAINT_DEFAULTS.bid_step_up_pct),
+    bid_step_down_pct: String(rules.bid_step_down_pct ?? PLAYBOOK_CONSTRAINT_DEFAULTS.bid_step_down_pct),
+    focus: String(rules.focus ?? PLAYBOOK_CONSTRAINT_DEFAULTS.focus),
+  };
+}
+
+function buildConstraintRulesFromForm(form, currentRules = {}) {
+  const toNumber = (value, fallback) => {
+    const parsed = Number(String(value ?? '').trim());
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  const normalized = {
+    ...currentRules,
+    target_acos: toNumber(form.target_acos, 30),
+    upper_acos: toNumber(form.upper_acos, 40),
+    lower_acos: toNumber(form.lower_acos, 20),
+    min_clicks_threshold: toNumber(form.min_clicks_threshold, 10),
+    cvr_weight: toNumber(form.cvr_weight, 0.35),
+    outlier_iqr_k: toNumber(form.outlier_iqr_k, 1.5),
+    bid_step_up_pct: toNumber(form.bid_step_up_pct, 8),
+    bid_step_down_pct: toNumber(form.bid_step_down_pct, 12),
+    focus: String(form.focus || '').trim(),
+  };
+  return normalized;
+}
 
 function getStoredAuthToken() {
   try {
@@ -974,6 +1048,10 @@ function App() {
   const [advice, setAdvice] = useState('');
   const [whitepaperMeta, setWhitepaperMeta] = useState({});
   const [adviceMeta, setAdviceMeta] = useState({});
+  const [playbookRawRules, setPlaybookRawRules] = useState({});
+  const [playbookConstraintForm, setPlaybookConstraintForm] = useState(() => normalizeConstraintFormFromRules({}));
+  const [playbookConstraintSaving, setPlaybookConstraintSaving] = useState(false);
+  const [playbookConstraintNotice, setPlaybookConstraintNotice] = useState('');
   const [whitepaperExpanded, setWhitepaperExpanded] = useState(true);
   const [adviceExpanded, setAdviceExpanded] = useState(true);
   const [uploadFile, setUploadFile] = useState(null);
@@ -1685,6 +1763,9 @@ function App() {
     setSyncWindow(null);
     setSyncEmptyGuard(null);
     setForceRefetchBeforeDate('');
+    setPlaybookRawRules({});
+    setPlaybookConstraintForm(normalizeConstraintFormFromRules({}));
+    setPlaybookConstraintNotice('');
     setSelectedMessageId(null);
     setMailAttachmentMap({});
   }, [selectedStore]);
@@ -1727,6 +1808,26 @@ function App() {
       disposed = true;
     };
   }, [authUser, selectedStore, t.requestFailed, t.playbook.syncJobDone]);
+
+  useEffect(() => {
+    if (!authUser || !selectedStore) return;
+    let disposed = false;
+    fetchJson(`/api/stores/${selectedStore}/playbook`, undefined, t.requestFailed)
+      .then((payload) => {
+        if (disposed) return;
+        const rules = payload?.rules || {};
+        setPlaybookRawRules(rules);
+        setPlaybookConstraintForm(normalizeConstraintFormFromRules(rules));
+      })
+      .catch(() => {
+        if (disposed) return;
+        setPlaybookRawRules({});
+        setPlaybookConstraintForm(normalizeConstraintFormFromRules({}));
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [authUser, selectedStore, t.requestFailed]);
 
   useEffect(() => {
     if (!authUser || !selectedStore) return;
@@ -1830,6 +1931,36 @@ function App() {
     if (!authUser || authUser.role !== 'admin' || view !== 'userManagement') return;
     loadUserManagementData();
   }, [authUser, view]);
+
+  const onSavePlaybookConstraints = async () => {
+    if (!selectedStore) return;
+    setPlaybookConstraintSaving(true);
+    setError('');
+    setPlaybookConstraintNotice('');
+    try {
+      const nextRules = buildConstraintRulesFromForm(playbookConstraintForm, playbookRawRules);
+      const payload = await fetchJson(
+        `/api/stores/${selectedStore}/playbook`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            rules: nextRules,
+            merge: true,
+          }),
+        },
+        t.requestFailed,
+      );
+      const savedRules = payload?.rules || nextRules;
+      setPlaybookRawRules(savedRules);
+      setPlaybookConstraintForm(normalizeConstraintFormFromRules(savedRules));
+      setPlaybookConstraintNotice(t.playbook.constraintsSaved);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPlaybookConstraintSaving(false);
+    }
+  };
 
   const onGenerateWhitepaper = async () => {
     if (!selectedStore) return;
@@ -2452,6 +2583,117 @@ function App() {
                       />
                       <span className="mt-1 block text-xs text-brand-600">${t.playbook.forceRefetchBeforeDateHint}</span>
                     </label>
+                  </div>
+                  <div className="mt-4 rounded-lg border border-brand-100 bg-brand-50 p-3">
+                    <label className="block text-sm font-semibold text-brand-800">${t.playbook.constraintsTitle}</label>
+                    <p className="mt-1 text-xs text-brand-600">${t.playbook.constraintsHint}</p>
+                    <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-3">
+                      <label className="block">
+                        <span className="mb-1 block text-xs font-medium text-brand-700">${t.playbook.constraintsTargetAcos}</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value=${playbookConstraintForm.target_acos}
+                          onChange=${(e) => setPlaybookConstraintForm((prev) => ({ ...prev, target_acos: e.target.value }))}
+                          className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-xs font-medium text-brand-700">${t.playbook.constraintsUpperAcos}</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value=${playbookConstraintForm.upper_acos}
+                          onChange=${(e) => setPlaybookConstraintForm((prev) => ({ ...prev, upper_acos: e.target.value }))}
+                          className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-xs font-medium text-brand-700">${t.playbook.constraintsLowerAcos}</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value=${playbookConstraintForm.lower_acos}
+                          onChange=${(e) => setPlaybookConstraintForm((prev) => ({ ...prev, lower_acos: e.target.value }))}
+                          className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-xs font-medium text-brand-700">${t.playbook.constraintsMinClicks}</span>
+                        <input
+                          type="number"
+                          step="1"
+                          value=${playbookConstraintForm.min_clicks_threshold}
+                          onChange=${(e) => setPlaybookConstraintForm((prev) => ({ ...prev, min_clicks_threshold: e.target.value }))}
+                          className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-xs font-medium text-brand-700">${t.playbook.constraintsCvrWeight}</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value=${playbookConstraintForm.cvr_weight}
+                          onChange=${(e) => setPlaybookConstraintForm((prev) => ({ ...prev, cvr_weight: e.target.value }))}
+                          className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-xs font-medium text-brand-700">${t.playbook.constraintsOutlierIqrK}</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value=${playbookConstraintForm.outlier_iqr_k}
+                          onChange=${(e) => setPlaybookConstraintForm((prev) => ({ ...prev, outlier_iqr_k: e.target.value }))}
+                          className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-xs font-medium text-brand-700">${t.playbook.constraintsBidStepUp}</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value=${playbookConstraintForm.bid_step_up_pct}
+                          onChange=${(e) => setPlaybookConstraintForm((prev) => ({ ...prev, bid_step_up_pct: e.target.value }))}
+                          className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-xs font-medium text-brand-700">${t.playbook.constraintsBidStepDown}</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value=${playbookConstraintForm.bid_step_down_pct}
+                          onChange=${(e) => setPlaybookConstraintForm((prev) => ({ ...prev, bid_step_down_pct: e.target.value }))}
+                          className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
+                        />
+                      </label>
+                      <label className="block md:col-span-2 lg:col-span-3">
+                        <span className="mb-1 block text-xs font-medium text-brand-700">${t.playbook.constraintsFocus}</span>
+                        <textarea
+                          rows="2"
+                          value=${playbookConstraintForm.focus}
+                          onChange=${(e) => setPlaybookConstraintForm((prev) => ({ ...prev, focus: e.target.value }))}
+                          className="block w-full rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"
+                        ></textarea>
+                      </label>
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <button
+                        onClick=${onSavePlaybookConstraints}
+                        disabled=${Boolean(playbookConstraintSaving)}
+                        className=${`rounded-md border px-3 py-1.5 text-xs font-semibold ${
+                          playbookConstraintSaving
+                            ? 'cursor-not-allowed border-brand-100 bg-brand-50 text-brand-300'
+                            : 'border-brand-300 bg-white text-brand-700 hover:bg-brand-50'
+                        }`}
+                      >
+                        ${playbookConstraintSaving ? t.playbook.constraintsSavingBtn : t.playbook.constraintsSaveBtn}
+                      </button>
+                      ${playbookConstraintNotice
+                        ? html`<span className="text-xs text-brand-700">${playbookConstraintNotice}</span>`
+                        : null}
+                    </div>
                   </div>
                   <div className="mt-4 rounded-lg border border-brand-100 bg-brand-50 p-3">
                     <label className="block text-sm font-semibold text-brand-800">${t.playbook.uploadLabel}</label>

@@ -24,7 +24,7 @@ from .auth.models import User
 from .customer_service_ai.api import router as customer_service_router
 from .customer_service_ai.db import init_customer_service_schema
 from .context_export_jobs import context_export_job_manager
-from .data_access import HISTORY_DIR, PERFORMANCE_DIR, Store, store_repo
+from .data_access import HISTORY_DIR, PERFORMANCE_DIR, PLAYBOOK_DIR, Store, store_repo
 from .gemini_bridge import (
     build_advice_prompt,
     build_whitepaper_prompt,
@@ -87,6 +87,12 @@ class WhitepaperRequest(BaseModel):
     lang: str = "zh"
 
 
+class PlaybookUpdateRequest(BaseModel):
+    rules: Dict[str, Any]
+    merge: bool = True
+    store_name: Optional[str] = None
+
+
 class LingxingSyncRequest(BaseModel):
     store_id: Optional[str] = None
     report_date: Optional[str] = None
@@ -140,6 +146,49 @@ DEFAULT_UPLOAD_RULES = {
     "bid_step_down_pct": 12,
     "focus": "Balance growth and efficiency with strict spend discipline",
 }
+
+
+def _playbook_path(store_id: str) -> Path:
+    return PLAYBOOK_DIR / f"store_playbook_{store_id}.json"
+
+
+def _load_or_init_playbook_payload(store_id: str, store_name: Optional[str] = None) -> Dict[str, Any]:
+    PLAYBOOK_DIR.mkdir(parents=True, exist_ok=True)
+    path = _playbook_path(store_id)
+    if path.exists():
+        with path.open("r", encoding="utf-8") as f:
+            payload = json.load(f)
+        if isinstance(payload, dict):
+            if str(payload.get("store_id") or "") != store_id:
+                payload["store_id"] = store_id
+            if store_name and not str(payload.get("store_name") or "").strip():
+                payload["store_name"] = store_name
+            if not isinstance(payload.get("rules"), dict):
+                payload["rules"] = dict(DEFAULT_UPLOAD_RULES)
+            return payload
+
+    resolved_name = store_name or store_repo.get_store_name(store_id)
+    return {
+        "store_id": store_id,
+        "store_name": resolved_name,
+        "rules": dict(DEFAULT_UPLOAD_RULES),
+    }
+
+
+def _save_playbook_payload(store_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    PLAYBOOK_DIR.mkdir(parents=True, exist_ok=True)
+    normalized = dict(payload or {})
+    normalized["store_id"] = store_id
+    normalized["store_name"] = str(normalized.get("store_name") or store_repo.get_store_name(store_id))
+    rules = normalized.get("rules")
+    if not isinstance(rules, dict):
+        rules = dict(DEFAULT_UPLOAD_RULES)
+    normalized["rules"] = rules
+
+    path = _playbook_path(store_id)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(normalized, f, ensure_ascii=False, indent=2)
+    return normalized
 
 
 def _parse_upload_rules(raw_rules: Optional[str]) -> Dict[str, Any]:
@@ -503,6 +552,49 @@ def get_ai_whitepaper(
         "whitepaper": whitepaper,
         "whitepaper_meta": whitepaper_meta,
     }
+
+
+@app.get("/api/stores/{store_id}/playbook")
+def get_store_playbook(
+    store_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    _ensure_store_scope(db, current_user, store_id)
+    try:
+        payload = _load_or_init_playbook_payload(store_id=store_id)
+        payload = _save_playbook_payload(store_id=store_id, payload=payload)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return payload
+
+
+@app.put("/api/stores/{store_id}/playbook")
+def update_store_playbook(
+    store_id: str,
+    payload: PlaybookUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    _ensure_store_scope(db, current_user, store_id)
+    try:
+        existing = _load_or_init_playbook_payload(
+            store_id=store_id,
+            store_name=payload.store_name,
+        )
+        incoming_rules = dict(payload.rules or {})
+        if payload.merge:
+            merged_rules = dict(existing.get("rules") or {})
+            merged_rules.update(incoming_rules)
+            existing["rules"] = merged_rules
+        else:
+            existing["rules"] = incoming_rules
+        if payload.store_name:
+            existing["store_name"] = payload.store_name
+        saved = _save_playbook_payload(store_id=store_id, payload=existing)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return saved
 
 
 @app.get("/api/stores/{store_id}/whitepaper")
