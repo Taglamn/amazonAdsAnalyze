@@ -146,12 +146,12 @@ def resolve_max_output_tokens() -> int:
 
     raw = os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "").strip()
     if not raw:
-        return 4096
+        return 8192
     try:
         value = int(raw)
     except ValueError:
-        return 4096
-    return max(256, value)
+        return 8192
+    return max(512, min(value, 16384))
 
 
 def resolve_gemini_continuation_rounds() -> int:
@@ -160,12 +160,12 @@ def resolve_gemini_continuation_rounds() -> int:
 
     raw = os.getenv("GEMINI_CONTINUATION_ROUNDS", "").strip()
     if not raw:
-        return 2
+        return 6
     try:
         value = int(raw)
     except ValueError:
-        return 2
-    return max(0, min(5, value))
+        return 6
+    return max(0, min(12, value))
 
 
 def _normalize_gemini_text(text: str) -> str:
@@ -268,12 +268,13 @@ def call_gemini_with_meta(prompt: str, model: str | None = None) -> Tuple[str, D
 
     round_count = 1
     while round_count <= continuation_rounds and finish_reason == "MAX_TOKENS":
+        tail_excerpt = text[-4000:] if len(text) > 4000 else text
         continue_prompt = (
             "Continue the same response from exactly where it stopped.\n"
             "Do not repeat prior sentences.\n"
             "Return only the continuation text.\n\n"
             f"Original request:\n{prompt}\n\n"
-            f"Current partial response:\n{text}\n"
+            f"Current partial response tail (latest part):\n{tail_excerpt}\n"
         )
 
         extra_text, finish_reason, extra_usage = _call_gemini_once(
@@ -302,6 +303,7 @@ def call_gemini_with_meta(prompt: str, model: str | None = None) -> Tuple[str, D
         "total_token_count": total_tokens,
         "char_count": len(text),
         "line_count": text.count("\n") + 1,
+        "truncated": finish_reasons[-1] == "MAX_TOKENS",
     }
 
     return text, meta

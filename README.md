@@ -378,6 +378,7 @@ Amazon 广告分析与运营辅助平台，核心覆盖：
 - `GEMINI_MODEL`（默认 `gemini-2.5-flash`）
 - `GEMINI_MAX_OUTPUT_TOKENS`
 - `GEMINI_CONTINUATION_ROUNDS`
+- `WHITEPAPER_MIN_CHAR_COUNT`（存量白皮书低于该长度时自动重生）
 
 ### 8.2 Lingxing
 

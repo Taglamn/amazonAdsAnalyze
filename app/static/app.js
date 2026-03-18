@@ -170,6 +170,7 @@ const I18N = {
       exportTxt: 'Export .txt',
       metaLabel: 'Response Meta',
       finishReason: 'Finish',
+      possibleTruncate: 'Response may be truncated. Increase output tokens or regenerate.',
       chars: 'Chars',
       lines: 'Lines',
       whitepaperEmpty: 'No auto-rule blueprint generated yet.',
@@ -387,6 +388,7 @@ const I18N = {
       exportTxt: '导出 .txt',
       metaLabel: '响应元信息',
       finishReason: '结束原因',
+      possibleTruncate: '结果可能被截断，建议提高输出上限后重新生成。',
       chars: '字符数',
       lines: '行数',
       whitepaperEmpty: '暂未生成自动规则方案。',
@@ -731,6 +733,7 @@ function downloadBlobFile(filename, blob) {
 function TextOutputBlock({ title, text, emptyText, meta, expanded, onToggle, onExport, t }) {
   const hasText = Boolean(text);
   const finishReason = meta?.finish_reason || '-';
+  const maybeTruncated = Boolean(meta?.truncated) || finishReason === 'MAX_TOKENS';
   const lineCount = meta?.line_count ?? '-';
   const charCount = meta?.char_count ?? '-';
   const bodyClass = expanded
@@ -764,6 +767,9 @@ function TextOutputBlock({ title, text, emptyText, meta, expanded, onToggle, onE
       <p className="mt-2 text-xs text-brand-600">
         ${t.playbook.metaLabel}: ${t.playbook.finishReason}=${finishReason}, ${t.playbook.lines}=${lineCount}, ${t.playbook.chars}=${charCount}
       </p>
+      ${hasText && maybeTruncated
+        ? html`<p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">${t.playbook.possibleTruncate}</p>`
+        : null}
       <pre className=${bodyClass}>${hasText ? text : emptyText}</pre>
     </div>
   `;

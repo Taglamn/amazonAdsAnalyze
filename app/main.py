@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -226,6 +227,17 @@ def _build_stored_text_meta(content: str) -> Dict[str, Any]:
         "char_count": len(normalized),
         "line_count": normalized.count("\n") + 1 if normalized else 0,
     }
+
+
+def _resolve_whitepaper_min_char_count() -> int:
+    raw = os.getenv("WHITEPAPER_MIN_CHAR_COUNT", "").strip()
+    if not raw:
+        return 1200
+    try:
+        value = int(raw)
+    except ValueError:
+        return 1200
+    return max(200, min(value, 20000))
 
 
 def _list_lingxing_bound_stores() -> List[Dict[str, Any]]:
@@ -475,7 +487,8 @@ def get_ai_advice(
             _build_stored_text_meta(whitepaper_context) if whitepaper_context else {}
         )
 
-        if not whitepaper_context:
+        whitepaper_min_chars = _resolve_whitepaper_min_char_count()
+        if not whitepaper_context or len(whitepaper_context.strip()) < whitepaper_min_chars:
             whitepaper_prompt = build_whitepaper_prompt(
                 store_id=store_id,
                 rules=playbook.get("rules", {}),
@@ -487,6 +500,7 @@ def get_ai_advice(
                 prompt=whitepaper_prompt, model=payload.model
             )
             save_whitepaper(store_id, whitepaper_context)
+            whitepaper_source = "generated"
 
         prompt = build_advice_prompt(
             store_id=store_id,
@@ -968,7 +982,8 @@ async def analyze_uploaded_excel(
         if run_gemini:
             whitepaper_context = load_whitepaper(store_id) or ""
             whitepaper_source = "stored" if whitepaper_context else "generated"
-            if whitepaper_context:
+            whitepaper_min_chars = _resolve_whitepaper_min_char_count()
+            if whitepaper_context and len(whitepaper_context.strip()) >= whitepaper_min_chars:
                 whitepaper = whitepaper_context
                 whitepaper_meta = _build_stored_text_meta(whitepaper)
             else:
