@@ -982,6 +982,7 @@ function App() {
   const [whitepaperStorageSummary, setWhitepaperStorageSummary] = useState('');
   const [syncSummary, setSyncSummary] = useState('');
   const [syncRows, setSyncRows] = useState([]);
+  const [syncSummaryExpanded, setSyncSummaryExpanded] = useState(true);
   const [syncTotals, setSyncTotals] = useState(null);
   const [syncWindow, setSyncWindow] = useState(null);
   const [syncSortKey, setSyncSortKey] = useState('campaign');
@@ -2529,7 +2530,15 @@ function App() {
                 </div>
 
                 <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
-                  <h4 className="text-sm font-semibold">${t.playbook.syncSummaryLabel}</h4>
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-semibold">${t.playbook.syncSummaryLabel}</h4>
+                    <button
+                      onClick=${() => setSyncSummaryExpanded((v) => !v)}
+                      className="rounded-md border border-brand-200 bg-white px-3 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50"
+                    >
+                      ${syncSummaryExpanded ? t.playbook.collapse : t.playbook.expand}
+                    </button>
+                  </div>
                   <p className="mt-2 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">
                     ${syncJobStatus
                       ? `${t.playbook.syncJobProgress}: ${syncJobStatus.progress_pct ?? 0}% | ${t.playbook.syncJobStage}: ${syncJobStatus.stage || '-'} | ${t.playbook.syncJobUpdatedAt}: ${
@@ -2545,57 +2554,61 @@ function App() {
                         }`
                       : t.playbook.syncJobIdle}
                   </p>
-                  ${syncTotals
+                  ${syncSummaryExpanded
                     ? html`
-                        <p className="mt-2 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">
-                          ${t.playbook.syncRangeTotals}: ${(syncTotals.start_date || syncWindow?.start_date || '-')} ~ ${(syncTotals.end_date || syncWindow?.end_date || '-')}
-                          | ${t.playbook.syncTotalDays}: ${syncTotals.days ?? '-'}
-                          | ${t.playbook.syncTotalClicks}: ${syncTotals.clicks ?? 0}
-                          | ${t.playbook.syncTotalSpend}: ${fmtMoney(syncTotals.spend ?? 0, language)}
-                          | ${t.playbook.syncTotalSales}: ${fmtMoney(syncTotals.sales ?? 0, language)}
-                          | ${t.playbook.syncTotalAcos}: ${fmtPct(syncTotals.acos ?? 0)}
-                          | ${t.playbook.syncTotalAdGroups}: ${syncTotals.ad_groups_with_spend ?? 0}
-                        </p>
+                        ${syncTotals
+                          ? html`
+                              <p className="mt-2 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">
+                                ${t.playbook.syncRangeTotals}: ${(syncTotals.start_date || syncWindow?.start_date || '-')} ~ ${(syncTotals.end_date || syncWindow?.end_date || '-')}
+                                | ${t.playbook.syncTotalDays}: ${syncTotals.days ?? '-'}
+                                | ${t.playbook.syncTotalClicks}: ${syncTotals.clicks ?? 0}
+                                | ${t.playbook.syncTotalSpend}: ${fmtMoney(syncTotals.spend ?? 0, language)}
+                                | ${t.playbook.syncTotalSales}: ${fmtMoney(syncTotals.sales ?? 0, language)}
+                                | ${t.playbook.syncTotalAcos}: ${fmtPct(syncTotals.acos ?? 0)}
+                                | ${t.playbook.syncTotalAdGroups}: ${syncTotals.ad_groups_with_spend ?? 0}
+                              </p>
+                            `
+                          : null}
+                        ${syncEmptyGuard?.has_warning
+                          ? html`
+                              <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                                <p className="font-semibold">${t.playbook.emptyGuardTitle}</p>
+                                <p className="mt-1">
+                                  ${t.playbook.emptyGuardSummary}
+                                  | ${t.playbook.emptyGuardPending}: ${syncEmptyGuard.pending_total_days ?? 0}
+                                  | ${t.playbook.emptyGuardSuspect}: ${syncEmptyGuard.suspect_total_days ?? 0}
+                                  | ${t.playbook.emptyGuardConfirmed}: ${syncEmptyGuard.confirmed_total_days ?? 0}
+                                </p>
+                                ${Object.entries(syncEmptyGuard.by_category || {}).map(([category, detail]) => html`
+                                  <p key=${category} className="mt-1 text-xs">
+                                    ${(t.playbook.emptyGuardCategory || {})[category] || category}:
+                                    ${t.playbook.emptyGuardPending} ${detail?.pending_days ?? 0},
+                                    ${t.playbook.emptyGuardSuspect} ${detail?.suspect_days ?? 0},
+                                    ${t.playbook.emptyGuardConfirmed} ${detail?.confirmed_days ?? 0}
+                                  </p>
+                                `)}
+                              </div>
+                            `
+                          : null}
+                        ${syncSummary
+                          ? html`<${LingxingSyncTable}
+                              rows=${syncRows}
+                              t=${t}
+                              language=${language}
+                              sortKey=${syncSortKey}
+                              sortDir=${syncSortDir}
+                              onSort=${(key) => {
+                                if (syncSortKey === key) {
+                                  setSyncSortDir((v) => (v === 'asc' ? 'desc' : 'asc'));
+                                  return;
+                                }
+                                setSyncSortKey(key);
+                                setSyncSortDir('asc');
+                              }}
+                            />`
+                          : html`<p className="mt-2 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">${t.playbook.syncSummaryEmpty}</p>`}
                       `
                     : null}
-                  ${syncEmptyGuard?.has_warning
-                    ? html`
-                        <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                          <p className="font-semibold">${t.playbook.emptyGuardTitle}</p>
-                          <p className="mt-1">
-                            ${t.playbook.emptyGuardSummary}
-                            | ${t.playbook.emptyGuardPending}: ${syncEmptyGuard.pending_total_days ?? 0}
-                            | ${t.playbook.emptyGuardSuspect}: ${syncEmptyGuard.suspect_total_days ?? 0}
-                            | ${t.playbook.emptyGuardConfirmed}: ${syncEmptyGuard.confirmed_total_days ?? 0}
-                          </p>
-                          ${Object.entries(syncEmptyGuard.by_category || {}).map(([category, detail]) => html`
-                            <p key=${category} className="mt-1 text-xs">
-                              ${(t.playbook.emptyGuardCategory || {})[category] || category}:
-                              ${t.playbook.emptyGuardPending} ${detail?.pending_days ?? 0},
-                              ${t.playbook.emptyGuardSuspect} ${detail?.suspect_days ?? 0},
-                              ${t.playbook.emptyGuardConfirmed} ${detail?.confirmed_days ?? 0}
-                            </p>
-                          `)}
-                        </div>
-                      `
-                    : null}
-                  ${syncSummary
-                    ? html`<${LingxingSyncTable}
-                        rows=${syncRows}
-                        t=${t}
-                        language=${language}
-                        sortKey=${syncSortKey}
-                        sortDir=${syncSortDir}
-                        onSort=${(key) => {
-                          if (syncSortKey === key) {
-                            setSyncSortDir((v) => (v === 'asc' ? 'desc' : 'asc'));
-                            return;
-                          }
-                          setSyncSortKey(key);
-                          setSyncSortDir('asc');
-                        }}
-                      />`
-                    : html`<p className="mt-2 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">${t.playbook.syncSummaryEmpty}</p>`}
                 </div>
 
                 <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
