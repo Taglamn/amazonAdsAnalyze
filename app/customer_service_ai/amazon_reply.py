@@ -31,6 +31,7 @@ def reply_to_amazon_email(
     reply_text: str,
     *,
     transport_settings: MailTransportSettings | None = None,
+    enforce_compliance: bool = True,
 ) -> dict[str, Any]:
     """
     Reply through Amazon Buyer-Seller Messaging relay address.
@@ -58,8 +59,13 @@ def reply_to_amazon_email(
         return _blocked("empty_reply", "Reply text cannot be empty.")
 
     compliance = _validate_reply_compliance(body)
-    if not compliance["ok"]:
+    if not compliance["ok"] and enforce_compliance:
         return _blocked("compliance_violation", compliance["message"], violations=compliance["violations"])
+    if not compliance["ok"] and not enforce_compliance:
+        logger.warning(
+            "amazon_reply_compliance_bypassed violations=%s",
+            compliance["violations"],
+        )
 
     headers = {
         "In-Reply-To": message_id,
@@ -90,6 +96,8 @@ def reply_to_amazon_email(
         "to": reply_to,
         "subject": final_subject,
         "message_id": sent_message_id,
+        "compliance_bypassed": bool(not compliance["ok"] and not enforce_compliance),
+        "compliance_violations": compliance["violations"],
     }
 
 

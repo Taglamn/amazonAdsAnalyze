@@ -324,6 +324,7 @@ def send_approved_reply(
         conversation_id=message.conversation_id,
         reply=final_reply,
         attachments=attachments,
+        enforce_compliance=False,
     )
 
     message.status = MessageStatus.SENT.value

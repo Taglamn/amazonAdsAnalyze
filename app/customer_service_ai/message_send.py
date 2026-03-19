@@ -26,6 +26,7 @@ class MessageSendService:
         conversation_id: str,
         reply: str,
         attachments: list[dict[str, Any]] | None = None,
+        enforce_compliance: bool = True,
     ) -> dict[str, Any]:
         if attachments:
             raise RuntimeError("SMTP channel does not support attachment sending in current implementation")
@@ -60,6 +61,7 @@ class MessageSendService:
             },
             reply,
             transport_settings=self.transport_settings,
+            enforce_compliance=enforce_compliance,
         )
         if not bool(reply_result.get("success")):
             raise RuntimeError(str(reply_result.get("message") or "Failed to send Amazon reply"))
