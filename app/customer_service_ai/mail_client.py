@@ -259,7 +259,7 @@ def _smtp_test_login_with_fallback(settings: MailTransportSettings) -> None:
     failures: list[str] = []
     for mode, use_ssl, use_starttls in attempts:
         try:
-            _smtp_login_once(settings=settings, use_ssl=use_ssl, use_starttls=use_starttls)
+            _smtp_login_with_variants(settings=settings, use_ssl=use_ssl, use_starttls=use_starttls)
             return
         except MailClientError as exc:
             failures.append(f"{mode}: {exc}")
@@ -273,7 +273,12 @@ def _smtp_send_with_fallback(settings: MailTransportSettings, message: EmailMess
     failures: list[str] = []
     for mode, use_ssl, use_starttls in attempts:
         try:
-            _smtp_send_once(settings, message, use_ssl=use_ssl, use_starttls=use_starttls)
+            _smtp_send_with_variants(
+                settings,
+                message,
+                use_ssl=use_ssl,
+                use_starttls=use_starttls,
+            )
             return
         except MailClientError as exc:
             failures.append(f"{mode}: {exc}")
@@ -318,51 +323,85 @@ def _build_smtp_attempts(settings: MailTransportSettings) -> list[tuple[str, boo
     return attempts
 
 
-def _smtp_login_once(*, settings: MailTransportSettings, use_ssl: bool, use_starttls: bool) -> None:
-    try:
-        if use_ssl:
-            with smtplib.SMTP_SSL(
-                settings.smtp_host,
-                settings.smtp_port,
-                timeout=settings.timeout_seconds,
-            ) as client:
-                client.ehlo()
-                client.login(settings.username, settings.password)
+def _smtp_login_with_variants(*, settings: MailTransportSettings, use_ssl: bool, use_starttls: bool) -> None:
+    failures: list[str] = []
+    for label, tls_verify, require_auth in _smtp_variant_plan(use_ssl=use_ssl, use_starttls=use_starttls):
+        try:
+            _smtp_login_or_send_once(
+                settings=settings,
+                use_ssl=use_ssl,
+                use_starttls=use_starttls,
+                require_auth=require_auth,
+                tls_verify=tls_verify,
+            )
             return
+        except MailClientError as exc:
+            failures.append(f"{label}: {exc}")
 
-        with smtplib.SMTP(
-            settings.smtp_host,
-            settings.smtp_port,
-            timeout=settings.timeout_seconds,
-        ) as client:
-            client.ehlo()
-            if use_starttls:
-                client.starttls(context=ssl.create_default_context())
-                client.ehlo()
-            client.login(settings.username, settings.password)
-    except smtplib.SMTPException as exc:
-        raise MailClientError(str(exc)) from exc
-    except OSError as exc:
-        raise MailClientError(str(exc)) from exc
+    detail = "; ".join(failures) if failures else "unknown error"
+    raise MailClientError(detail)
 
 
-def _smtp_send_once(
+def _smtp_send_with_variants(
     settings: MailTransportSettings,
     message: EmailMessage,
     *,
     use_ssl: bool,
     use_starttls: bool,
 ) -> None:
+    failures: list[str] = []
+    for label, tls_verify, require_auth in _smtp_variant_plan(use_ssl=use_ssl, use_starttls=use_starttls):
+        try:
+            _smtp_login_or_send_once(
+                settings=settings,
+                use_ssl=use_ssl,
+                use_starttls=use_starttls,
+                require_auth=require_auth,
+                tls_verify=tls_verify,
+                message=message,
+            )
+            return
+        except MailClientError as exc:
+            failures.append(f"{label}: {exc}")
+
+    detail = "; ".join(failures) if failures else "unknown error"
+    raise MailClientError(detail)
+
+
+def _smtp_variant_plan(*, use_ssl: bool, use_starttls: bool) -> list[tuple[str, bool, bool]]:
+    has_tls = bool(use_ssl or use_starttls)
+    plan: list[tuple[str, bool, bool]] = [("auth", True, True)]
+    if has_tls:
+        plan.append(("insecure_tls_auth", False, True))
+    plan.append(("no_auth", True, False))
+    if has_tls:
+        plan.append(("insecure_tls_no_auth", False, False))
+    return plan
+
+
+def _smtp_login_or_send_once(
+    *,
+    settings: MailTransportSettings,
+    use_ssl: bool,
+    use_starttls: bool,
+    require_auth: bool,
+    tls_verify: bool,
+    message: EmailMessage | None = None,
+) -> None:
+    tls_context = _build_tls_context(verify=tls_verify)
     try:
         if use_ssl:
             with smtplib.SMTP_SSL(
                 settings.smtp_host,
                 settings.smtp_port,
                 timeout=settings.timeout_seconds,
+                context=tls_context,
             ) as client:
                 client.ehlo()
-                client.login(settings.username, settings.password)
-                client.send_message(message)
+                if require_auth:
+                    client.login(settings.username, settings.password)
+                if message is not None:
+                    client.send_message(message)
             return
 
         with smtplib.SMTP(
@@ -372,14 +411,25 @@ def _smtp_send_once(
         ) as client:
             client.ehlo()
             if use_starttls:
-                client.starttls(context=ssl.create_default_context())
+                client.starttls(context=tls_context)
                 client.ehlo()
-            client.login(settings.username, settings.password)
-            client.send_message(message)
+            if require_auth:
+                client.login(settings.username, settings.password)
+            if message is not None:
+                client.send_message(message)
     except smtplib.SMTPException as exc:
         raise MailClientError(str(exc)) from exc
     except OSError as exc:
         raise MailClientError(str(exc)) from exc
+
+
+def _build_tls_context(*, verify: bool) -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    if verify:
+        return context
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return context
 
 
 def _safe_imap_logout(client: imaplib.IMAP4_SSL | None) -> None:
