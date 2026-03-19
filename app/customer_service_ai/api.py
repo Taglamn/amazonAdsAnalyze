@@ -55,7 +55,10 @@ router = APIRouter(prefix="/api/customer-service", tags=["customer-service"])
 logger = logging.getLogger(__name__)
 
 
-RoleDependency = Depends(require_roles(RoleName.ADMIN, RoleName.MANAGER, RoleName.STAFF))
+ReadRoleDependency = Depends(
+    require_roles(RoleName.ADMIN, RoleName.MANAGER, RoleName.STAFF, RoleName.VIEWER)
+)
+WriteRoleDependency = Depends(require_roles(RoleName.ADMIN, RoleName.MANAGER, RoleName.STAFF))
 
 
 def _build_message_client() -> LingxingMessagingClient:
@@ -138,7 +141,7 @@ def _resolve_target_fetch_store(
 def fetch_messages(
     external_store_id: str,
     payload: FetchMessagesRequest,
-    current_user: User = RoleDependency,
+    current_user: User = WriteRoleDependency,
     db: Session = Depends(get_db_session),
 ):
     """Fetch buyer messages from Lingxing API for one authorized store."""
@@ -246,7 +249,7 @@ def get_messages(
     category: str | None = Query(default=None),
     risk_level: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
-    current_user: User = RoleDependency,
+    current_user: User = ReadRoleDependency,
     db: Session = Depends(get_db_session),
 ):
     """List scoped buyer messages for the current store authorization."""
@@ -273,7 +276,7 @@ def get_messages(
 def get_message_detail(
     external_store_id: str,
     message_id: int,
-    current_user: User = RoleDependency,
+    current_user: User = ReadRoleDependency,
     db: Session = Depends(get_db_session),
 ):
     """Fetch Lingxing mail detail for one scoped message (expand on demand)."""
@@ -330,7 +333,7 @@ def process_message(
     external_store_id: str,
     message_id: int,
     payload: ProcessMessageRequest,
-    current_user: User = RoleDependency,
+    current_user: User = WriteRoleDependency,
     db: Session = Depends(get_db_session),
 ):
     """Run AI processing pipeline for one scoped message."""
@@ -418,7 +421,7 @@ def generate_reply(
     external_store_id: str,
     message_id: int,
     payload: ProcessMessageRequest,
-    current_user: User = RoleDependency,
+    current_user: User = WriteRoleDependency,
     db: Session = Depends(get_db_session),
 ):
     """Alias endpoint for process pipeline that returns structured AI reply JSON."""
@@ -437,7 +440,7 @@ def edit_reply(
     external_store_id: str,
     message_id: int,
     payload: EditReplyRequest,
-    current_user: User = RoleDependency,
+    current_user: User = WriteRoleDependency,
     db: Session = Depends(get_db_session),
 ):
     """Save edited AI reply for scoped message."""
@@ -468,7 +471,7 @@ def edit_reply(
 def approve_message(
     external_store_id: str,
     message_id: int,
-    current_user: User = RoleDependency,
+    current_user: User = WriteRoleDependency,
     db: Session = Depends(get_db_session),
 ):
     """Approve scoped AI reply before sending."""
@@ -500,7 +503,7 @@ def send_message(
     external_store_id: str,
     message_id: int,
     payload: SendReplyRequest,
-    current_user: User = RoleDependency,
+    current_user: User = WriteRoleDependency,
     db: Session = Depends(get_db_session),
 ):
     """Send approved reply for scoped message via Lingxing API."""
@@ -558,7 +561,7 @@ def approve_and_send_message(
     external_store_id: str,
     message_id: int,
     payload: SendReplyRequest | None = None,
-    current_user: User = RoleDependency,
+    current_user: User = WriteRoleDependency,
     db: Session = Depends(get_db_session),
 ):
     """Convenience endpoint: approve AI reply then send through Lingxing API."""
