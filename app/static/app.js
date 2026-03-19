@@ -1722,11 +1722,16 @@ function App() {
   };
 
   const loadMailServerSettings = async () => {
+    if (!selectedStore) return;
     setMailConfigSaving(true);
     setMailNotice('');
     setError('');
     try {
-      const data = await fetchJson('/api/customer-service/mail-settings', undefined, t.requestFailed);
+      const data = await fetchJson(
+        `/api/customer-service/mail-settings?store_id=${encodeURIComponent(selectedStore)}`,
+        undefined,
+        t.requestFailed,
+      );
       setMailConfig((prev) => ({
         ...prev,
         username: data.username || '',
@@ -1763,13 +1768,14 @@ function App() {
   });
 
   const onSaveMailServerSettings = async () => {
+    if (!selectedStore) return;
     setMailConfigSaving(true);
     setMailNotice('');
     setError('');
     try {
       const payload = buildMailServerPayload();
       const data = await fetchJson(
-        '/api/customer-service/mail-settings',
+        `/api/customer-service/mail-settings?store_id=${encodeURIComponent(selectedStore)}`,
         {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -1792,13 +1798,14 @@ function App() {
   };
 
   const onTestMailServerSettings = async () => {
+    if (!selectedStore) return;
     setMailConfigTesting(true);
     setMailNotice('');
     setError('');
     try {
       const payload = buildMailServerPayload();
       const data = await fetchJson(
-        '/api/customer-service/mail-settings/test',
+        `/api/customer-service/mail-settings/test?store_id=${encodeURIComponent(selectedStore)}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2165,9 +2172,9 @@ function App() {
   }, [view]);
 
   useEffect(() => {
-    if (!authUser || view !== 'autoReplyMail') return;
+    if (!authUser || !selectedStore || view !== 'autoReplyMail') return;
     loadMailServerSettings();
-  }, [authUser, view]);
+  }, [authUser, selectedStore, view]);
 
   useEffect(() => {
     if (!authUser || !selectedStore || view !== 'autoReplyMail' || autoReplyTab !== 'inbox') return;

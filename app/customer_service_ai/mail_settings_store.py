@@ -12,16 +12,16 @@ _DEFAULT_SETTINGS_DIR = Path(__file__).resolve().parent.parent / "data" / "custo
 
 
 class UserMailSettingsStore:
-    """Persist per-user IMAP/SMTP settings in local JSON files."""
+    """Persist per-user/per-store IMAP/SMTP settings in local JSON files."""
 
     def __init__(self, base_dir: Path | None = None) -> None:
         self.base_dir = base_dir or _DEFAULT_SETTINGS_DIR
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
 
-    def get_user_settings(self, *, tenant_id: int, user_id: int) -> dict[str, Any]:
+    def get_user_settings(self, *, tenant_id: int, user_id: int, store_id: int | None = None) -> dict[str, Any]:
         with self._lock:
-            data = self._read_locked(tenant_id=tenant_id, user_id=user_id)
+            data = self._read_locked(tenant_id=tenant_id, user_id=user_id, store_id=store_id)
         return {
             "username": str(data.get("username") or ""),
             "imap_host": str(data.get("imap_host") or ""),
@@ -36,9 +36,16 @@ class UserMailSettingsStore:
             "configured": bool(data),
         }
 
-    def upsert_user_settings(self, *, tenant_id: int, user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    def upsert_user_settings(
+        self,
+        *,
+        tenant_id: int,
+        user_id: int,
+        store_id: int | None = None,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
         with self._lock:
-            existing = self._read_locked(tenant_id=tenant_id, user_id=user_id)
+            existing = self._read_locked(tenant_id=tenant_id, user_id=user_id, store_id=store_id)
             merged = dict(existing)
 
             for key in (
@@ -69,13 +76,19 @@ class UserMailSettingsStore:
                     merged["password"] = ""
 
             self._validate_merged(merged)
-            self._write_locked(tenant_id=tenant_id, user_id=user_id, data=merged)
+            self._write_locked(tenant_id=tenant_id, user_id=user_id, store_id=store_id, data=merged)
 
-        return self.get_user_settings(tenant_id=tenant_id, user_id=user_id)
+        return self.get_user_settings(tenant_id=tenant_id, user_id=user_id, store_id=store_id)
 
-    def resolve_transport_settings_for_user(self, *, tenant_id: int, user_id: int) -> MailTransportSettings:
+    def resolve_transport_settings_for_user(
+        self,
+        *,
+        tenant_id: int,
+        user_id: int,
+        store_id: int | None = None,
+    ) -> MailTransportSettings:
         with self._lock:
-            stored = self._read_locked(tenant_id=tenant_id, user_id=user_id)
+            stored = self._read_locked(tenant_id=tenant_id, user_id=user_id, store_id=store_id)
 
         username = str(stored.get("username") or os.getenv("CUSTOMER_SERVICE_EMAIL_USERNAME", "")).strip()
         password = str(stored.get("password") or os.getenv("CUSTOMER_SERVICE_EMAIL_PASSWORD", "")).strip()
@@ -93,7 +106,8 @@ class UserMailSettingsStore:
 
         if not username or not password or not imap_host or not smtp_host:
             raise MailClientError(
-                "Mail server settings are incomplete for current user. Please configure IMAP/SMTP settings first."
+                "Mail server settings are incomplete for current scope. "
+                "Please configure IMAP/SMTP settings for this store first."
             )
 
         return self._to_transport_settings(
@@ -114,12 +128,13 @@ class UserMailSettingsStore:
         *,
         tenant_id: int,
         user_id: int,
+        store_id: int | None = None,
         payload: dict[str, Any],
     ) -> MailTransportSettings:
         """Build test transport settings from payload + existing stored password fallback."""
 
         with self._lock:
-            existing = self._read_locked(tenant_id=tenant_id, user_id=user_id)
+            existing = self._read_locked(tenant_id=tenant_id, user_id=user_id, store_id=store_id)
 
         merged = dict(existing)
         for key in (
@@ -193,11 +208,12 @@ class UserMailSettingsStore:
             timeout_seconds=max(1, int(timeout_seconds)),
         )
 
-    def _path(self, *, tenant_id: int, user_id: int) -> Path:
-        return self.base_dir / f"tenant_{tenant_id}_user_{user_id}.json"
+    def _path(self, *, tenant_id: int, user_id: int, store_id: int | None = None) -> Path:
+        if store_id is None:
+            return self.base_dir / f"tenant_{tenant_id}_user_{user_id}.json"
+        return self.base_dir / f"tenant_{tenant_id}_user_{user_id}_store_{store_id}.json"
 
-    def _read_locked(self, *, tenant_id: int, user_id: int) -> dict[str, Any]:
-        path = self._path(tenant_id=tenant_id, user_id=user_id)
+    def _read_json_file(self, path: Path) -> dict[str, Any]:
         if not path.exists():
             return {}
         try:
@@ -206,8 +222,27 @@ class UserMailSettingsStore:
             return {}
         return data if isinstance(data, dict) else {}
 
-    def _write_locked(self, *, tenant_id: int, user_id: int, data: dict[str, Any]) -> None:
-        path = self._path(tenant_id=tenant_id, user_id=user_id)
+    def _read_locked(self, *, tenant_id: int, user_id: int, store_id: int | None = None) -> dict[str, Any]:
+        path = self._path(tenant_id=tenant_id, user_id=user_id, store_id=store_id)
+        current = self._read_json_file(path)
+        if current:
+            return current
+        if store_id is not None:
+            # Backward compatibility: bootstrap from legacy per-user settings.
+            legacy = self._read_json_file(self._path(tenant_id=tenant_id, user_id=user_id))
+            if legacy:
+                return legacy
+        return {}
+
+    def _write_locked(
+        self,
+        *,
+        tenant_id: int,
+        user_id: int,
+        store_id: int | None = None,
+        data: dict[str, Any],
+    ) -> None:
+        path = self._path(tenant_id=tenant_id, user_id=user_id, store_id=store_id)
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 

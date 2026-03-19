@@ -39,10 +39,11 @@ def fetch_buyer_messages_task(
     db = SessionLocal()
     try:
         transport_settings = None
-        if actor_user_id and allow_auto_send:
+        if actor_user_id:
             transport_settings = user_mail_settings_store.resolve_transport_settings_for_user(
                 tenant_id=tenant_id,
                 user_id=actor_user_id,
+                store_id=store_id,
             )
         sync_service = MessageSyncService(transport_settings=transport_settings)
         storage_service = MessageStorageService()
@@ -105,6 +106,7 @@ def process_message_task(
             user_mail_settings_store.resolve_transport_settings_for_user(
                 tenant_id=tenant_id,
                 user_id=actor_user_id,
+                store_id=store_id,
             )
             if actor_user_id
             else None
@@ -179,6 +181,7 @@ def send_approved_reply_task(
             user_mail_settings_store.resolve_transport_settings_for_user(
                 tenant_id=tenant_id,
                 user_id=actor_user_id,
+                store_id=store_id,
             )
             if actor_user_id
             else None
