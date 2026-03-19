@@ -4,6 +4,7 @@ import html
 import imaplib
 import os
 import re
+import ssl
 import smtplib
 from dataclasses import dataclass
 from email import policy
@@ -155,29 +156,7 @@ def test_mail_server_login(settings: MailTransportSettings) -> dict[str, Any]:
     except OSError as exc:
         raise MailClientError(f"IMAP network test failed: {exc}") from exc
 
-    try:
-        if settings.smtp_use_ssl:
-            with smtplib.SMTP_SSL(
-                settings.smtp_host,
-                settings.smtp_port,
-                timeout=settings.timeout_seconds,
-            ) as client:
-                client.login(settings.username, settings.password)
-        else:
-            with smtplib.SMTP(
-                settings.smtp_host,
-                settings.smtp_port,
-                timeout=settings.timeout_seconds,
-            ) as client:
-                client.ehlo()
-                if settings.smtp_starttls:
-                    client.starttls()
-                    client.ehlo()
-                client.login(settings.username, settings.password)
-    except smtplib.SMTPException as exc:
-        raise MailClientError(f"SMTP login test failed: {exc}") from exc
-    except OSError as exc:
-        raise MailClientError(f"SMTP network test failed: {exc}") from exc
+    _smtp_test_login_with_fallback(settings)
 
     return {
         "imap_ok": True,
@@ -261,33 +240,137 @@ def send_email(
 
     message.set_content(body or "")
 
+    _smtp_send_with_fallback(settings, message)
+
+    return str(message["Message-ID"] or "").strip()
+
+
+def _smtp_test_login_with_fallback(settings: MailTransportSettings) -> None:
+    attempts = _build_smtp_attempts(settings)
+    failures: list[str] = []
+    for mode, use_ssl, use_starttls in attempts:
+        try:
+            _smtp_login_once(settings=settings, use_ssl=use_ssl, use_starttls=use_starttls)
+            return
+        except MailClientError as exc:
+            failures.append(f"{mode}: {exc}")
+
+    detail = "; ".join(failures) if failures else "unknown error"
+    raise MailClientError(f"SMTP login test failed for all strategies ({detail})")
+
+
+def _smtp_send_with_fallback(settings: MailTransportSettings, message: EmailMessage) -> None:
+    attempts = _build_smtp_attempts(settings)
+    failures: list[str] = []
+    for mode, use_ssl, use_starttls in attempts:
+        try:
+            _smtp_send_once(settings, message, use_ssl=use_ssl, use_starttls=use_starttls)
+            return
+        except MailClientError as exc:
+            failures.append(f"{mode}: {exc}")
+
+    detail = "; ".join(failures) if failures else "unknown error"
+    raise MailClientError(f"SMTP operation failed for all strategies ({detail})")
+
+
+def _build_smtp_attempts(settings: MailTransportSettings) -> list[tuple[str, bool, bool]]:
+    attempts: list[tuple[str, bool, bool]] = []
+    seen: set[tuple[bool, bool]] = set()
+
+    def add(name: str, use_ssl: bool, use_starttls: bool) -> None:
+        key = (use_ssl, use_starttls)
+        if key in seen:
+            return
+        seen.add(key)
+        attempts.append((name, use_ssl, use_starttls))
+
+    if settings.smtp_use_ssl:
+        add("ssl", True, False)
+        add("starttls", False, True)
+        add("plain", False, False)
+        return attempts
+
+    if settings.smtp_starttls:
+        add("starttls", False, True)
+        add("ssl", True, False)
+        add("plain", False, False)
+        return attempts
+
+    add("plain", False, False)
+    if settings.smtp_port == 465:
+        add("ssl", True, False)
+        add("starttls", False, True)
+    elif settings.smtp_port == 587:
+        add("starttls", False, True)
+        add("ssl", True, False)
+    else:
+        add("ssl", True, False)
+        add("starttls", False, True)
+    return attempts
+
+
+def _smtp_login_once(*, settings: MailTransportSettings, use_ssl: bool, use_starttls: bool) -> None:
     try:
-        if settings.smtp_use_ssl:
+        if use_ssl:
             with smtplib.SMTP_SSL(
                 settings.smtp_host,
                 settings.smtp_port,
                 timeout=settings.timeout_seconds,
             ) as client:
+                client.ehlo()
                 client.login(settings.username, settings.password)
-                client.send_message(message)
-        else:
-            with smtplib.SMTP(
+            return
+
+        with smtplib.SMTP(
+            settings.smtp_host,
+            settings.smtp_port,
+            timeout=settings.timeout_seconds,
+        ) as client:
+            client.ehlo()
+            if use_starttls:
+                client.starttls(context=ssl.create_default_context())
+                client.ehlo()
+            client.login(settings.username, settings.password)
+    except smtplib.SMTPException as exc:
+        raise MailClientError(str(exc)) from exc
+    except OSError as exc:
+        raise MailClientError(str(exc)) from exc
+
+
+def _smtp_send_once(
+    settings: MailTransportSettings,
+    message: EmailMessage,
+    *,
+    use_ssl: bool,
+    use_starttls: bool,
+) -> None:
+    try:
+        if use_ssl:
+            with smtplib.SMTP_SSL(
                 settings.smtp_host,
                 settings.smtp_port,
                 timeout=settings.timeout_seconds,
             ) as client:
                 client.ehlo()
-                if settings.smtp_starttls:
-                    client.starttls()
-                    client.ehlo()
                 client.login(settings.username, settings.password)
                 client.send_message(message)
-    except smtplib.SMTPException as exc:
-        raise MailClientError(f"SMTP operation failed: {exc}") from exc
-    except OSError as exc:
-        raise MailClientError(f"SMTP network error: {exc}") from exc
+            return
 
-    return str(message["Message-ID"] or "").strip()
+        with smtplib.SMTP(
+            settings.smtp_host,
+            settings.smtp_port,
+            timeout=settings.timeout_seconds,
+        ) as client:
+            client.ehlo()
+            if use_starttls:
+                client.starttls(context=ssl.create_default_context())
+                client.ehlo()
+            client.login(settings.username, settings.password)
+            client.send_message(message)
+    except smtplib.SMTPException as exc:
+        raise MailClientError(str(exc)) from exc
+    except OSError as exc:
+        raise MailClientError(str(exc)) from exc
 
 
 def _parse_raw_message(raw_email: bytes | str) -> Message:
