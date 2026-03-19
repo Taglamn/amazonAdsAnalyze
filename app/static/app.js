@@ -34,6 +34,8 @@ const I18N = {
       title: 'Auto Reply Mail',
       subtitle: 'Chat-style customer-service workspace for buyer emails.',
       tip: 'Flow: fetch mail -> AI fills draft -> confirm -> send.',
+      tabInbox: 'Inbox',
+      tabServer: 'Mail Server',
       fetchBtn: 'Fetch Messages',
       reloadBtn: 'Reload',
       processBtn: 'Generate Reply',
@@ -55,6 +57,24 @@ const I18N = {
       loadedCount: 'Loaded',
       fetchResult: 'Fetch result',
       selectedCount: 'Selected',
+      configTitle: 'Current Account IMAP/SMTP Settings',
+      configHint: 'These settings are bound to the current login account only.',
+      configLoadBtn: 'Load Settings',
+      configSaveBtn: 'Save Settings',
+      configSaved: 'Mail server settings saved.',
+      configUsername: 'Sender Account',
+      configPassword: 'Password',
+      configPasswordKeepHint: 'Leave blank to keep existing password.',
+      configImapHost: 'IMAP Host',
+      configImapPort: 'IMAP Port',
+      configImapMailbox: 'IMAP Mailbox',
+      configSmtpHost: 'SMTP Host',
+      configSmtpPort: 'SMTP Port',
+      configSmtpSsl: 'SMTP SSL',
+      configSmtpStarttls: 'SMTP STARTTLS',
+      configTimeout: 'Timeout (seconds)',
+      configPasswordSet: 'Password configured',
+      configPasswordUnset: 'Password not configured',
     },
     userMgmt: {
       title: 'User Management',
@@ -261,6 +281,8 @@ const I18N = {
       title: '自动回复邮件',
       subtitle: '聊天框模式的买家邮件客服工作台。',
       tip: '流程：拉取邮件 -> AI填充草稿 -> 人工确认 -> 发送。',
+      tabInbox: '收件箱',
+      tabServer: '邮件服务器',
       fetchBtn: '拉取邮件',
       reloadBtn: '刷新列表',
       processBtn: '生成回复',
@@ -282,6 +304,24 @@ const I18N = {
       loadedCount: '已加载',
       fetchResult: '拉取结果',
       selectedCount: '当前会话',
+      configTitle: '当前账号 IMAP/SMTP 配置',
+      configHint: '该配置仅作用于当前登录账号，不影响其他用户。',
+      configLoadBtn: '加载配置',
+      configSaveBtn: '保存配置',
+      configSaved: '邮件服务器配置已保存。',
+      configUsername: '发件账号',
+      configPassword: '密码',
+      configPasswordKeepHint: '留空表示沿用已保存密码。',
+      configImapHost: 'IMAP 服务器',
+      configImapPort: 'IMAP 端口',
+      configImapMailbox: 'IMAP 邮箱文件夹',
+      configSmtpHost: 'SMTP 服务器',
+      configSmtpPort: 'SMTP 端口',
+      configSmtpSsl: 'SMTP SSL',
+      configSmtpStarttls: 'SMTP STARTTLS',
+      configTimeout: '超时（秒）',
+      configPasswordSet: '密码已配置',
+      configPasswordUnset: '密码未配置',
     },
     userMgmt: {
       title: '用户管理',
@@ -1140,6 +1180,22 @@ function App() {
   const [mailRows, setMailRows] = useState([]);
   const [mailLoading, setMailLoading] = useState(false);
   const [mailNotice, setMailNotice] = useState('');
+  const [autoReplyTab, setAutoReplyTab] = useState('inbox');
+  const [mailConfigSaving, setMailConfigSaving] = useState(false);
+  const [mailConfig, setMailConfig] = useState({
+    username: '',
+    password: '',
+    imap_host: '',
+    imap_port: 993,
+    imap_mailbox: 'INBOX',
+    smtp_host: '',
+    smtp_port: 465,
+    smtp_use_ssl: true,
+    smtp_starttls: false,
+    timeout_seconds: 30,
+    password_set: false,
+    configured: false,
+  });
   const [replyDrafts, setReplyDrafts] = useState({});
   const [selectedMessageId, setSelectedMessageId] = useState(null);
   const [mailAttachmentMap, setMailAttachmentMap] = useState({});
@@ -1660,6 +1716,74 @@ function App() {
     }
   };
 
+  const loadMailServerSettings = async () => {
+    setMailConfigSaving(true);
+    setMailNotice('');
+    setError('');
+    try {
+      const data = await fetchJson('/api/customer-service/mail-settings', undefined, t.requestFailed);
+      setMailConfig((prev) => ({
+        ...prev,
+        username: data.username || '',
+        password: '',
+        imap_host: data.imap_host || '',
+        imap_port: Number(data.imap_port || 993),
+        imap_mailbox: data.imap_mailbox || 'INBOX',
+        smtp_host: data.smtp_host || '',
+        smtp_port: Number(data.smtp_port || 465),
+        smtp_use_ssl: Boolean(data.smtp_use_ssl),
+        smtp_starttls: Boolean(data.smtp_starttls),
+        timeout_seconds: Number(data.timeout_seconds || 30),
+        password_set: Boolean(data.password_set),
+        configured: Boolean(data.configured),
+      }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setMailConfigSaving(false);
+    }
+  };
+
+  const onSaveMailServerSettings = async () => {
+    setMailConfigSaving(true);
+    setMailNotice('');
+    setError('');
+    try {
+      const payload = {
+        username: String(mailConfig.username || '').trim(),
+        password: String(mailConfig.password || ''),
+        imap_host: String(mailConfig.imap_host || '').trim(),
+        imap_port: Number(mailConfig.imap_port || 993),
+        imap_mailbox: String(mailConfig.imap_mailbox || 'INBOX').trim(),
+        smtp_host: String(mailConfig.smtp_host || '').trim(),
+        smtp_port: Number(mailConfig.smtp_port || 465),
+        smtp_use_ssl: Boolean(mailConfig.smtp_use_ssl),
+        smtp_starttls: Boolean(mailConfig.smtp_starttls),
+        timeout_seconds: Number(mailConfig.timeout_seconds || 30),
+      };
+      const data = await fetchJson(
+        '/api/customer-service/mail-settings',
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        },
+        t.requestFailed,
+      );
+      setMailConfig((prev) => ({
+        ...prev,
+        password: '',
+        password_set: Boolean(data.password_set),
+        configured: Boolean(data.configured),
+      }));
+      setMailNotice(t.autoReply.configSaved);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setMailConfigSaving(false);
+    }
+  };
+
   const onFetchCustomerMessages = async () => {
     if (!selectedStore) return;
     setMailLoading(true);
@@ -2011,14 +2135,19 @@ function App() {
   }, [view]);
 
   useEffect(() => {
-    if (!authUser || !selectedStore || view !== 'autoReplyMail') return;
-    loadCustomerMessages();
-  }, [authUser, selectedStore, view]);
+    if (!authUser || view !== 'autoReplyMail') return;
+    loadMailServerSettings();
+  }, [authUser, view]);
 
   useEffect(() => {
-    if (!selectedMailRow || view !== 'autoReplyMail') return;
+    if (!authUser || !selectedStore || view !== 'autoReplyMail' || autoReplyTab !== 'inbox') return;
+    loadCustomerMessages();
+  }, [authUser, selectedStore, view, autoReplyTab]);
+
+  useEffect(() => {
+    if (!selectedMailRow || view !== 'autoReplyMail' || autoReplyTab !== 'inbox') return;
     ensureMessageDetail(selectedMailRow);
-  }, [selectedMailRow?.id, view]);
+  }, [selectedMailRow?.id, view, autoReplyTab]);
 
   useEffect(() => {
     if (!authUser || authUser.role !== 'admin' || view !== 'userManagement') return;
@@ -3060,171 +3189,298 @@ function App() {
                   <h3 className="text-base font-semibold">${t.autoReply.title}</h3>
                   <p className="mt-1 text-sm text-brand-600">${t.autoReply.subtitle}</p>
                   <p className="mt-3 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">${t.autoReply.tip}</p>
-                  <div className="mt-4 flex flex-wrap gap-2">
+                  <div className="mt-4 inline-flex rounded-md border border-brand-200 bg-white p-1">
                     <button
-                      onClick=${onFetchCustomerMessages}
-                      disabled=${Boolean(mailLoading)}
-                      className=${`rounded-md border px-4 py-2 text-sm font-semibold ${
-                        mailLoading
-                          ? 'cursor-not-allowed border-brand-100 bg-brand-50 text-brand-300'
-                          : 'border-brand-300 bg-white text-brand-700 hover:bg-brand-50'
+                      onClick=${() => setAutoReplyTab('inbox')}
+                      className=${`rounded px-3 py-1.5 text-sm font-semibold ${
+                        autoReplyTab === 'inbox' ? 'bg-brand-700 text-white' : 'text-brand-700 hover:bg-brand-50'
                       }`}
                     >
-                      ${t.autoReply.fetchBtn}
+                      ${t.autoReply.tabInbox}
                     </button>
                     <button
-                      onClick=${loadCustomerMessages}
-                      disabled=${Boolean(mailLoading)}
-                      className=${`rounded-md border px-4 py-2 text-sm font-semibold ${
-                        mailLoading
-                          ? 'cursor-not-allowed border-brand-100 bg-brand-50 text-brand-300'
-                          : 'border-brand-300 bg-white text-brand-700 hover:bg-brand-50'
+                      onClick=${() => setAutoReplyTab('server')}
+                      className=${`rounded px-3 py-1.5 text-sm font-semibold ${
+                        autoReplyTab === 'server' ? 'bg-brand-700 text-white' : 'text-brand-700 hover:bg-brand-50'
                       }`}
                     >
-                      ${t.autoReply.reloadBtn}
+                      ${t.autoReply.tabServer}
                     </button>
                   </div>
-                  ${mailLoading ? html`<p className="mt-3 text-sm text-brand-600">${t.loading}</p>` : null}
                   ${mailNotice
                     ? html`<p className="mt-3 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-800">${mailNotice}</p>`
                     : null}
                 </div>
 
-                <div className="overflow-hidden rounded-xl border border-brand-100 bg-white shadow-sm">
-                  <div className="grid min-h-[680px] grid-cols-1 md:grid-cols-[320px_1fr]">
-                    <aside className="border-b border-brand-100 bg-brand-50/40 md:border-b-0 md:border-r">
-                      <div className="flex h-11 items-center justify-between border-b border-brand-100 px-3 text-xs font-semibold uppercase tracking-wide text-brand-600">
-                        <span>${t.autoReply.leftListTitle}</span>
-                        <span>${t.autoReply.selectedCount}: ${mailRows.length}</span>
+                ${autoReplyTab === 'inbox'
+                  ? html`
+                      <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            onClick=${onFetchCustomerMessages}
+                            disabled=${Boolean(mailLoading)}
+                            className=${`rounded-md border px-4 py-2 text-sm font-semibold ${
+                              mailLoading
+                                ? 'cursor-not-allowed border-brand-100 bg-brand-50 text-brand-300'
+                                : 'border-brand-300 bg-white text-brand-700 hover:bg-brand-50'
+                            }`}
+                          >
+                            ${t.autoReply.fetchBtn}
+                          </button>
+                          <button
+                            onClick=${loadCustomerMessages}
+                            disabled=${Boolean(mailLoading)}
+                            className=${`rounded-md border px-4 py-2 text-sm font-semibold ${
+                              mailLoading
+                                ? 'cursor-not-allowed border-brand-100 bg-brand-50 text-brand-300'
+                                : 'border-brand-300 bg-white text-brand-700 hover:bg-brand-50'
+                            }`}
+                          >
+                            ${t.autoReply.reloadBtn}
+                          </button>
+                        </div>
+                        ${mailLoading ? html`<p className="mt-3 text-sm text-brand-600">${t.loading}</p>` : null}
                       </div>
-                      <div className="max-h-[640px] overflow-y-auto">
-                        ${mailRows.length
-                          ? mailRows.map((row) => {
-                              const detail = mailDetailMap[row.id] || null;
-                              const title = detail?.from_name || detail?.from_address || row.conversation_id || `#${row.id}`;
-                              const subject = detail?.subject || row.buyer_message || '-';
-                              const isActive = selectedMailRow?.id === row.id;
-                              return html`
-                                <button
-                                  key=${row.id}
-                                  onClick=${() => onSelectMessage(row)}
-                                  className=${`block w-full border-b border-brand-100 px-3 py-3 text-left ${isActive ? 'bg-brand-100/70' : 'hover:bg-brand-50'}`}
-                                >
-                                  <div className="flex items-start justify-between gap-3">
-                                    <p className="truncate text-sm font-semibold text-brand-800">${title}</p>
-                                    <p className="shrink-0 text-xs text-brand-500">${formatDateTime(row.created_at)}</p>
-                                  </div>
-                                  <p className="mt-1 truncate text-xs text-brand-600">${subject}</p>
-                                  <span className="mt-2 inline-flex rounded-full border border-brand-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-brand-700">${row.status}</span>
-                                </button>
-                              `;
-                            })
-                          : html`<p className="px-3 py-4 text-sm text-brand-600">${t.autoReply.empty}</p>`}
-                      </div>
-                    </aside>
 
-                    <div className="flex min-w-0 flex-col">
-                      ${selectedMailRow
-                        ? html`
-                            <div className="border-b border-brand-100 px-4 py-3">
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div className="min-w-0">
-                                  <p className="truncate text-base font-semibold text-brand-900">${selectedMailDetail?.subject || selectedMailRow.buyer_message || '-'}</p>
-                                  <p className="mt-1 truncate text-xs text-brand-600">${t.autoReply.fromLabel}: ${selectedMailDetail?.from_address || selectedMailDetail?.from_name || '-'}</p>
-                                </div>
-                                <button
-                                  onClick=${() => onProcessMessage(selectedMailRow.id)}
-                                  disabled=${Boolean(mailLoading)}
-                                  className="rounded-md border border-brand-300 bg-white px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50 disabled:cursor-not-allowed disabled:border-brand-100 disabled:bg-brand-50 disabled:text-brand-300"
-                                >
-                                  ${t.autoReply.processBtn}
-                                </button>
-                              </div>
+                      <div className="overflow-hidden rounded-xl border border-brand-100 bg-white shadow-sm">
+                        <div className="grid min-h-[680px] grid-cols-1 md:grid-cols-[320px_1fr]">
+                          <aside className="border-b border-brand-100 bg-brand-50/40 md:border-b-0 md:border-r">
+                            <div className="flex h-11 items-center justify-between border-b border-brand-100 px-3 text-xs font-semibold uppercase tracking-wide text-brand-600">
+                              <span>${t.autoReply.leftListTitle}</span>
+                              <span>${t.autoReply.selectedCount}: ${mailRows.length}</span>
                             </div>
+                            <div className="max-h-[640px] overflow-y-auto">
+                              ${mailRows.length
+                                ? mailRows.map((row) => {
+                                    const detail = mailDetailMap[row.id] || null;
+                                    const title = detail?.from_name || detail?.from_address || row.conversation_id || `#${row.id}`;
+                                    const subject = detail?.subject || row.buyer_message || '-';
+                                    const isActive = selectedMailRow?.id === row.id;
+                                    return html`
+                                      <button
+                                        key=${row.id}
+                                        onClick=${() => onSelectMessage(row)}
+                                        className=${`block w-full border-b border-brand-100 px-3 py-3 text-left ${isActive ? 'bg-brand-100/70' : 'hover:bg-brand-50'}`}
+                                      >
+                                        <div className="flex items-start justify-between gap-3">
+                                          <p className="truncate text-sm font-semibold text-brand-800">${title}</p>
+                                          <p className="shrink-0 text-xs text-brand-500">${formatDateTime(row.created_at)}</p>
+                                        </div>
+                                        <p className="mt-1 truncate text-xs text-brand-600">${subject}</p>
+                                        <span className="mt-2 inline-flex rounded-full border border-brand-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-brand-700">${row.status}</span>
+                                      </button>
+                                    `;
+                                  })
+                                : html`<p className="px-3 py-4 text-sm text-brand-600">${t.autoReply.empty}</p>`}
+                            </div>
+                          </aside>
 
-                            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-white px-4 py-4">
-                              <div className="max-w-[85%] rounded-xl border border-brand-100 bg-brand-50 p-3">
-                                <p className="mb-1 text-xs font-semibold text-brand-700">${t.autoReply.buyerLabel}</p>
-                                ${selectedMailDetailLoading
-                                  ? html`<p className="whitespace-pre-wrap break-words text-sm text-brand-600">${t.autoReply.detailLoading}</p>`
-                                  : html`<p className="whitespace-pre-wrap break-words text-sm text-brand-800">${selectedBuyerText || selectedMailRow.buyer_message || '-'}</p>`}
-                              </div>
-
-                              ${selectedMailRow.status === 'sent' || selectedMailRow.status === 'auto_sent'
-                                ? html`
-                                    <div className="ml-auto max-w-[85%] rounded-xl border border-green-200 bg-green-50 p-3">
-                                      <p className="mb-1 text-xs font-semibold text-green-700">${t.autoReply.sellerLabel} · ${t.autoReply.sentTag}</p>
-                                      <p className="whitespace-pre-wrap break-words text-sm text-green-900">${selectedHistoryReply || '-'}</p>
+                          <div className="flex min-w-0 flex-col">
+                            ${selectedMailRow
+                              ? html`
+                                  <div className="border-b border-brand-100 px-4 py-3">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                      <div className="min-w-0">
+                                        <p className="truncate text-base font-semibold text-brand-900">${selectedMailDetail?.subject || selectedMailRow.buyer_message || '-'}</p>
+                                        <p className="mt-1 truncate text-xs text-brand-600">${t.autoReply.fromLabel}: ${selectedMailDetail?.from_address || selectedMailDetail?.from_name || '-'}</p>
+                                      </div>
+                                      <button
+                                        onClick=${() => onProcessMessage(selectedMailRow.id)}
+                                        disabled=${Boolean(mailLoading)}
+                                        className="rounded-md border border-brand-300 bg-white px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50 disabled:cursor-not-allowed disabled:border-brand-100 disabled:bg-brand-50 disabled:text-brand-300"
+                                      >
+                                        ${t.autoReply.processBtn}
+                                      </button>
                                     </div>
-                                  `
-                                : null}
-                            </div>
+                                  </div>
 
-                            <div className="border-t border-brand-100 bg-brand-50/30 p-3">
-                              <div className="mb-2 flex flex-wrap items-center gap-2">
-                                <label className="inline-flex cursor-pointer items-center rounded-md border border-brand-300 bg-white px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50">
-                                  <input
-                                    type="file"
-                                    multiple
-                                    className="hidden"
-                                    onChange=${(e) => {
-                                      onUploadAttachments(selectedMailRow.id, e.target.files);
-                                      e.target.value = '';
-                                    }}
-                                  />
-                                  ${t.autoReply.uploadAttachment}
-                                </label>
-                                ${selectedAttachments.length
-                                  ? selectedAttachments.map(
-                                      (item, idx) => html`
-                                        <span key=${`${selectedMailRow.id}_${idx}`} className="inline-flex items-center gap-1 rounded-md border border-brand-200 bg-white px-2 py-1 text-xs text-brand-700">
-                                          <span className="max-w-[180px] truncate">${item.name}</span>
-                                          <button
-                                            onClick=${() => onRemoveAttachment(selectedMailRow.id, idx)}
-                                            className="rounded px-1 text-brand-500 hover:bg-brand-50 hover:text-brand-700"
-                                            title=${t.autoReply.removeAttachment}
-                                          >
-                                            ×
-                                          </button>
-                                        </span>
-                                      `,
-                                    )
-                                  : html`<span className="text-xs text-brand-500">${t.autoReply.attachmentEmpty}</span>`}
-                              </div>
+                                  <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-white px-4 py-4">
+                                    <div className="max-w-[85%] rounded-xl border border-brand-100 bg-brand-50 p-3">
+                                      <p className="mb-1 text-xs font-semibold text-brand-700">${t.autoReply.buyerLabel}</p>
+                                      ${selectedMailDetailLoading
+                                        ? html`<p className="whitespace-pre-wrap break-words text-sm text-brand-600">${t.autoReply.detailLoading}</p>`
+                                        : html`<p className="whitespace-pre-wrap break-words text-sm text-brand-800">${selectedBuyerText || selectedMailRow.buyer_message || '-'}</p>`}
+                                    </div>
 
-                              <div className="flex items-end gap-2">
-                                <textarea
-                                  value=${selectedDraft}
-                                  onChange=${(e) =>
-                                    setReplyDrafts((prev) => ({ ...prev, [selectedMailRow.id]: e.target.value }))}
-                                  rows="4"
-                                  placeholder=${t.autoReply.draftPlaceholder}
-                                  className="min-h-[96px] flex-1 rounded-md border border-brand-200 bg-white px-3 py-2 text-sm text-brand-800"
-                                />
-                                <div className="flex shrink-0 flex-col gap-2">
-                                  <button
-                                    onClick=${() => onSaveReply(selectedMailRow.id)}
-                                    disabled=${Boolean(mailLoading) || !String(selectedDraft || '').trim()}
-                                    className="rounded-md border border-brand-300 bg-white px-3 py-2 text-xs font-semibold text-brand-700 hover:bg-brand-50 disabled:cursor-not-allowed disabled:border-brand-100 disabled:bg-brand-50 disabled:text-brand-300"
-                                  >
-                                    ${t.autoReply.saveBtn}
-                                  </button>
-                                  <button
-                                    onClick=${() => onSendMessage(selectedMailRow.id)}
-                                    disabled=${Boolean(mailLoading) || !String(selectedDraft || '').trim()}
-                                    className="rounded-md bg-brand-700 px-4 py-2 text-xs font-semibold text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-brand-200"
-                                  >
-                                    ${t.autoReply.sendBtn}
-                                  </button>
-                                </div>
-                              </div>
-                              <p className="mt-2 text-[11px] text-brand-500">${t.autoReply.sendHint}</p>
-                            </div>
-                          `
-                        : html`<div className="flex h-full items-center justify-center text-sm text-brand-500">${t.autoReply.empty}</div>`}
-                    </div>
-                  </div>
-                </div>
+                                    ${selectedMailRow.status === 'sent' || selectedMailRow.status === 'auto_sent'
+                                      ? html`
+                                          <div className="ml-auto max-w-[85%] rounded-xl border border-green-200 bg-green-50 p-3">
+                                            <p className="mb-1 text-xs font-semibold text-green-700">${t.autoReply.sellerLabel} · ${t.autoReply.sentTag}</p>
+                                            <p className="whitespace-pre-wrap break-words text-sm text-green-900">${selectedHistoryReply || '-'}</p>
+                                          </div>
+                                        `
+                                      : null}
+                                  </div>
+
+                                  <div className="border-t border-brand-100 bg-brand-50/30 p-3">
+                                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                                      <label className="inline-flex cursor-pointer items-center rounded-md border border-brand-300 bg-white px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50">
+                                        <input
+                                          type="file"
+                                          multiple
+                                          className="hidden"
+                                          onChange=${(e) => {
+                                            onUploadAttachments(selectedMailRow.id, e.target.files);
+                                            e.target.value = '';
+                                          }}
+                                        />
+                                        ${t.autoReply.uploadAttachment}
+                                      </label>
+                                      ${selectedAttachments.length
+                                        ? selectedAttachments.map(
+                                            (item, idx) => html`
+                                              <span key=${`${selectedMailRow.id}_${idx}`} className="inline-flex items-center gap-1 rounded-md border border-brand-200 bg-white px-2 py-1 text-xs text-brand-700">
+                                                <span className="max-w-[180px] truncate">${item.name}</span>
+                                                <button
+                                                  onClick=${() => onRemoveAttachment(selectedMailRow.id, idx)}
+                                                  className="rounded px-1 text-brand-500 hover:bg-brand-50 hover:text-brand-700"
+                                                  title=${t.autoReply.removeAttachment}
+                                                >
+                                                  ×
+                                                </button>
+                                              </span>
+                                            `,
+                                          )
+                                        : html`<span className="text-xs text-brand-500">${t.autoReply.attachmentEmpty}</span>`}
+                                    </div>
+
+                                    <div className="flex items-end gap-2">
+                                      <textarea
+                                        value=${selectedDraft}
+                                        onChange=${(e) =>
+                                          setReplyDrafts((prev) => ({ ...prev, [selectedMailRow.id]: e.target.value }))}
+                                        rows="4"
+                                        placeholder=${t.autoReply.draftPlaceholder}
+                                        className="min-h-[96px] flex-1 rounded-md border border-brand-200 bg-white px-3 py-2 text-sm text-brand-800"
+                                      />
+                                      <div className="flex shrink-0 flex-col gap-2">
+                                        <button
+                                          onClick=${() => onSaveReply(selectedMailRow.id)}
+                                          disabled=${Boolean(mailLoading) || !String(selectedDraft || '').trim()}
+                                          className="rounded-md border border-brand-300 bg-white px-3 py-2 text-xs font-semibold text-brand-700 hover:bg-brand-50 disabled:cursor-not-allowed disabled:border-brand-100 disabled:bg-brand-50 disabled:text-brand-300"
+                                        >
+                                          ${t.autoReply.saveBtn}
+                                        </button>
+                                        <button
+                                          onClick=${() => onSendMessage(selectedMailRow.id)}
+                                          disabled=${Boolean(mailLoading) || !String(selectedDraft || '').trim()}
+                                          className="rounded-md bg-brand-700 px-4 py-2 text-xs font-semibold text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-brand-200"
+                                        >
+                                          ${t.autoReply.sendBtn}
+                                        </button>
+                                      </div>
+                                    </div>
+                                    <p className="mt-2 text-[11px] text-brand-500">${t.autoReply.sendHint}</p>
+                                  </div>
+                                `
+                              : html`<div className="flex h-full items-center justify-center text-sm text-brand-500">${t.autoReply.empty}</div>`}
+                          </div>
+                        </div>
+                      </div>
+                    `
+                  : html`
+                      <div className="rounded-xl border border-brand-100 bg-white p-4 shadow-sm">
+                        <h4 className="text-sm font-semibold">${t.autoReply.configTitle}</h4>
+                        <p className="mt-1 text-sm text-brand-600">${t.autoReply.configHint}</p>
+                        <p className="mt-2 text-xs text-brand-500">
+                          ${mailConfig.password_set ? t.autoReply.configPasswordSet : t.autoReply.configPasswordUnset}
+                        </p>
+
+                        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                          <input
+                            type="text"
+                            value=${mailConfig.username}
+                            onChange=${(e) => setMailConfig((prev) => ({ ...prev, username: e.target.value }))}
+                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
+                            placeholder=${t.autoReply.configUsername}
+                          />
+                          <input
+                            type="password"
+                            value=${mailConfig.password}
+                            onChange=${(e) => setMailConfig((prev) => ({ ...prev, password: e.target.value }))}
+                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
+                            placeholder=${t.autoReply.configPassword}
+                          />
+                          <input
+                            type="text"
+                            value=${mailConfig.imap_host}
+                            onChange=${(e) => setMailConfig((prev) => ({ ...prev, imap_host: e.target.value }))}
+                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
+                            placeholder=${t.autoReply.configImapHost}
+                          />
+                          <input
+                            type="number"
+                            value=${mailConfig.imap_port}
+                            onChange=${(e) => setMailConfig((prev) => ({ ...prev, imap_port: Number(e.target.value || 0) }))}
+                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
+                            placeholder=${t.autoReply.configImapPort}
+                          />
+                          <input
+                            type="text"
+                            value=${mailConfig.imap_mailbox}
+                            onChange=${(e) => setMailConfig((prev) => ({ ...prev, imap_mailbox: e.target.value }))}
+                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
+                            placeholder=${t.autoReply.configImapMailbox}
+                          />
+                          <input
+                            type="text"
+                            value=${mailConfig.smtp_host}
+                            onChange=${(e) => setMailConfig((prev) => ({ ...prev, smtp_host: e.target.value }))}
+                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
+                            placeholder=${t.autoReply.configSmtpHost}
+                          />
+                          <input
+                            type="number"
+                            value=${mailConfig.smtp_port}
+                            onChange=${(e) => setMailConfig((prev) => ({ ...prev, smtp_port: Number(e.target.value || 0) }))}
+                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
+                            placeholder=${t.autoReply.configSmtpPort}
+                          />
+                          <input
+                            type="number"
+                            value=${mailConfig.timeout_seconds}
+                            onChange=${(e) => setMailConfig((prev) => ({ ...prev, timeout_seconds: Number(e.target.value || 0) }))}
+                            className="rounded-md border border-brand-200 px-3 py-2 text-sm"
+                            placeholder=${t.autoReply.configTimeout}
+                          />
+                          <label className="inline-flex items-center gap-2 text-sm text-brand-700">
+                            <input
+                              type="checkbox"
+                              checked=${Boolean(mailConfig.smtp_use_ssl)}
+                              onChange=${(e) => setMailConfig((prev) => ({ ...prev, smtp_use_ssl: e.target.checked }))}
+                            />
+                            ${t.autoReply.configSmtpSsl}
+                          </label>
+                          <label className="inline-flex items-center gap-2 text-sm text-brand-700">
+                            <input
+                              type="checkbox"
+                              checked=${Boolean(mailConfig.smtp_starttls)}
+                              onChange=${(e) => setMailConfig((prev) => ({ ...prev, smtp_starttls: e.target.checked }))}
+                            />
+                            ${t.autoReply.configSmtpStarttls}
+                          </label>
+                        </div>
+                        <p className="mt-2 text-xs text-brand-500">${t.autoReply.configPasswordKeepHint}</p>
+
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <button
+                            onClick=${loadMailServerSettings}
+                            disabled=${Boolean(mailConfigSaving)}
+                            className="rounded-md border border-brand-300 bg-white px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50 disabled:cursor-not-allowed disabled:border-brand-100 disabled:bg-brand-50 disabled:text-brand-300"
+                          >
+                            ${t.autoReply.configLoadBtn}
+                          </button>
+                          <button
+                            onClick=${onSaveMailServerSettings}
+                            disabled=${Boolean(mailConfigSaving)}
+                            className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-brand-200"
+                          >
+                            ${t.autoReply.configSaveBtn}
+                          </button>
+                        </div>
+                        ${mailConfigSaving ? html`<p className="mt-3 text-sm text-brand-600">${t.loading}</p>` : null}
+                      </div>
+                    `}
               </section>
             `
           : null}

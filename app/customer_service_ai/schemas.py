@@ -111,3 +111,30 @@ class MailDetailResponse(BaseModel):
     date: str | None = None
     attachments: list[dict[str, Any]] = Field(default_factory=list)
     raw_data: dict[str, Any] = Field(default_factory=dict)
+
+
+class MailServerSettingsResponse(BaseModel):
+    username: str = ""
+    imap_host: str = ""
+    imap_port: int = 993
+    imap_mailbox: str = "INBOX"
+    smtp_host: str = ""
+    smtp_port: int = 465
+    smtp_use_ssl: bool = True
+    smtp_starttls: bool = False
+    timeout_seconds: int = 30
+    password_set: bool = False
+    configured: bool = False
+
+
+class MailServerSettingsUpdateRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=255)
+    password: str = Field(default="", max_length=255)
+    imap_host: str = Field(min_length=1, max_length=255)
+    imap_port: int = Field(default=993, ge=1, le=65535)
+    imap_mailbox: str = Field(default="INBOX", min_length=1, max_length=255)
+    smtp_host: str = Field(min_length=1, max_length=255)
+    smtp_port: int = Field(default=465, ge=1, le=65535)
+    smtp_use_ssl: bool = True
+    smtp_starttls: bool = False
+    timeout_seconds: int = Field(default=30, ge=1, le=300)

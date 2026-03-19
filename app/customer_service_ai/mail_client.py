@@ -96,12 +96,10 @@ def parse_email(raw_email: bytes | str) -> dict[str, Any]:
     }
 
 
-def get_unread_emails() -> list[dict[str, Any]]:
-    """Fetch unread emails from IMAP mailbox using UNSEEN query."""
+def get_unread_emails_with_settings(settings: MailTransportSettings) -> list[dict[str, Any]]:
+    """Fetch unread emails using explicit transport settings."""
 
-    settings = load_mail_transport_settings()
-    records: list[dict[str, str]] = []
-
+    records: list[dict[str, Any]] = []
     try:
         with imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port) as client:
             client.login(settings.username, settings.password)
@@ -128,20 +126,25 @@ def get_unread_emails() -> list[dict[str, Any]]:
                     try:
                         client.store(message_id, "+FLAGS", "\\Seen")
                     except Exception:
-                        # Mark-as-seen failures should not block ingestion.
                         pass
     except imaplib.IMAP4.error as exc:
         raise MailClientError(f"IMAP operation failed: {exc}") from exc
     except OSError as exc:
         raise MailClientError(f"IMAP network error: {exc}") from exc
-
     return records
 
 
-def get_email_by_message_id(message_id: str) -> dict[str, Any] | None:
+def get_unread_emails(settings: MailTransportSettings | None = None) -> list[dict[str, Any]]:
+    """Fetch unread emails from IMAP mailbox using UNSEEN query."""
+
+    effective = settings or load_mail_transport_settings()
+    return get_unread_emails_with_settings(effective)
+
+
+def get_email_by_message_id(message_id: str, settings: MailTransportSettings | None = None) -> dict[str, Any] | None:
     """Fetch one email from mailbox using Message-ID header lookup."""
 
-    settings = load_mail_transport_settings()
+    settings = settings or load_mail_transport_settings()
     needle = str(message_id or "").strip()
     if not needle:
         return None
@@ -185,10 +188,11 @@ def send_email(
     subject: str,
     body: str,
     headers: dict[str, Any] | None = None,
+    settings: MailTransportSettings | None = None,
 ) -> str:
     """Send an email via SMTP and return the message-id."""
 
-    settings = load_mail_transport_settings()
+    settings = settings or load_mail_transport_settings()
     if not to_address.strip():
         raise MailClientError("to_address cannot be empty")
 

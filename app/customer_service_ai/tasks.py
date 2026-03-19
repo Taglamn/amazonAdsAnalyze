@@ -7,6 +7,7 @@ from .auto_reply_engine import AutoReplyEngine
 from .db import MessageStatus, SessionLocal, init_customer_service_schema
 from .human_review import HumanReviewEngine
 from .llm import CustomerServiceLLM
+from .mail_settings_store import user_mail_settings_store
 from .message_classification import MessageClassificationService
 from .message_meta_store import message_meta_store
 from .message_send import MessageSendService
@@ -30,13 +31,20 @@ def fetch_buyer_messages_task(
     tenant_id: int,
     store_id: int,
     auto_process: bool = True,
+    actor_user_id: int | None = None,
 ) -> dict[str, Any]:
     """Fetch and optionally process messages for specific tenant/store."""
 
     init_customer_service_schema()
     db = SessionLocal()
     try:
-        sync_service = MessageSyncService()
+        transport_settings = None
+        if actor_user_id and allow_auto_send:
+            transport_settings = user_mail_settings_store.resolve_transport_settings_for_user(
+                tenant_id=tenant_id,
+                user_id=actor_user_id,
+            )
+        sync_service = MessageSyncService(transport_settings=transport_settings)
         storage_service = MessageStorageService()
         result = fetch_and_store_messages(
             db=db,
@@ -64,6 +72,7 @@ def fetch_buyer_messages_task(
                     tenant_id=tenant_id,
                     store_id=store_id,
                     message_id=message_id,
+                    actor_user_id=actor_user_id,
                 )
                 processed += 1
 
@@ -85,12 +94,21 @@ def process_message_task(
     message_id: int,
     force_regenerate: bool = False,
     allow_auto_send: bool = True,
+    actor_user_id: int | None = None,
 ) -> dict[str, Any]:
     """Run AI pipeline for a message under tenant/store scope."""
 
     init_customer_service_schema()
     db = SessionLocal()
     try:
+        transport_settings = (
+            user_mail_settings_store.resolve_transport_settings_for_user(
+                tenant_id=tenant_id,
+                user_id=actor_user_id,
+            )
+            if actor_user_id
+            else None
+        )
         scoped_message = get_message(
             db,
             message_id=message_id,
@@ -121,6 +139,7 @@ def process_message_task(
             send_service=MessageSendService(
                 tenant_id=tenant_id,
                 store_id=store_id,
+                transport_settings=transport_settings,
             ),
             force_regenerate=force_regenerate,
             allow_auto_send=allow_auto_send,
@@ -145,12 +164,25 @@ def process_message_task(
 
 
 @celery_app.task(name="customer_service.send_approved_reply")
-def send_approved_reply_task(tenant_id: int, store_id: int, message_id: int) -> dict[str, Any]:
+def send_approved_reply_task(
+    tenant_id: int,
+    store_id: int,
+    message_id: int,
+    actor_user_id: int | None = None,
+) -> dict[str, Any]:
     """Send approved reply for a scoped message."""
 
     init_customer_service_schema()
     db = SessionLocal()
     try:
+        transport_settings = (
+            user_mail_settings_store.resolve_transport_settings_for_user(
+                tenant_id=tenant_id,
+                user_id=actor_user_id,
+            )
+            if actor_user_id
+            else None
+        )
         message, sp_result = send_approved_reply(
             db=db,
             message_id=message_id,
@@ -159,6 +191,7 @@ def send_approved_reply_task(tenant_id: int, store_id: int, message_id: int) -> 
             send_service=MessageSendService(
                 tenant_id=tenant_id,
                 store_id=store_id,
+                transport_settings=transport_settings,
             ),
         )
         return {

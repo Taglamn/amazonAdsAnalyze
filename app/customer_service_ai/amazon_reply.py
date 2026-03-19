@@ -4,7 +4,7 @@ import logging
 import re
 from typing import Any
 
-from .mail_client import MailClientError, send_email
+from .mail_client import MailClientError, MailTransportSettings, send_email
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,12 @@ _MARKETING_TERMS = (
 )
 
 
-def reply_to_amazon_email(original_email: dict[str, Any], reply_text: str) -> dict[str, Any]:
+def reply_to_amazon_email(
+    original_email: dict[str, Any],
+    reply_text: str,
+    *,
+    transport_settings: MailTransportSettings | None = None,
+) -> dict[str, Any]:
     """
     Reply through Amazon Buyer-Seller Messaging relay address.
 
@@ -68,6 +73,7 @@ def reply_to_amazon_email(original_email: dict[str, Any], reply_text: str) -> di
             subject=final_subject,
             body=_build_plain_text_reply(body),
             headers=headers,
+            settings=transport_settings,
         )
     except MailClientError as exc:
         logger.warning("amazon_reply_send_failed reason=%s", exc)
@@ -167,4 +173,3 @@ def _blocked(code: str, message: str, *, violations: list[str] | None = None) ->
         "message": message,
         "violations": violations or [],
     }
-

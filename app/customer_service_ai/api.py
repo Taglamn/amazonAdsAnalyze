@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.crud import get_or_create_store, get_store_by_external_id
 from app.auth.database import get_db_session
-from app.auth.dependencies import enforce_store_access, require_roles
+from app.auth.dependencies import enforce_store_access, get_current_user, require_roles
 from app.auth.models import RoleName, User
 
 from .analysis_context import build_message_analysis_text
@@ -16,7 +16,8 @@ from .auto_reply_engine import AutoReplyEngine
 from .db import MessageStatus
 from .human_review import HumanReviewEngine
 from .llm import CustomerServiceLLM, LLMGenerationError
-from .mail_client import MailClientError, get_email_by_message_id
+from .mail_client import MailClientError, MailTransportSettings, get_email_by_message_id
+from .mail_settings_store import user_mail_settings_store
 from .message_classification import MessageClassificationService
 from .message_send import MessageSendService
 from .message_meta_store import message_meta_store
@@ -29,6 +30,8 @@ from .schemas import (
     EditReplyRequest,
     FetchMessagesRequest,
     InlineFetchResponse,
+    MailServerSettingsResponse,
+    MailServerSettingsUpdateRequest,
     MailDetailResponse,
     MessageOperationResponse,
     PipelineResultOut,
@@ -61,6 +64,14 @@ ReadRoleDependency = Depends(
     require_roles(RoleName.ADMIN, RoleName.MANAGER, RoleName.STAFF, RoleName.VIEWER)
 )
 WriteRoleDependency = Depends(require_roles(RoleName.ADMIN, RoleName.MANAGER, RoleName.STAFF))
+CurrentUserDependency = Depends(get_current_user)
+
+
+def _resolve_user_transport_settings(current_user: User) -> MailTransportSettings:
+    return user_mail_settings_store.resolve_transport_settings_for_user(
+        tenant_id=current_user.tenant_id,
+        user_id=current_user.user_id,
+    )
 
 
 def _resolve_scoped_store(
@@ -96,6 +107,31 @@ def _resolve_scoped_store(
     return store.store_id
 
 
+@router.get("/mail-settings", response_model=MailServerSettingsResponse)
+def get_mail_settings(current_user: User = CurrentUserDependency):
+    settings = user_mail_settings_store.get_user_settings(
+        tenant_id=current_user.tenant_id,
+        user_id=current_user.user_id,
+    )
+    return MailServerSettingsResponse(**settings)
+
+
+@router.put("/mail-settings", response_model=MailServerSettingsResponse)
+def update_mail_settings(
+    payload: MailServerSettingsUpdateRequest,
+    current_user: User = CurrentUserDependency,
+):
+    try:
+        settings = user_mail_settings_store.upsert_user_settings(
+            tenant_id=current_user.tenant_id,
+            user_id=current_user.user_id,
+            payload=payload.model_dump(),
+        )
+    except MailClientError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return MailServerSettingsResponse(**settings)
+
+
 @router.post("/stores/{external_store_id}/messages/fetch", response_model=TaskQueuedResponse | InlineFetchResponse)
 def fetch_messages(
     external_store_id: str,
@@ -107,6 +143,7 @@ def fetch_messages(
 
     auto_process = payload.auto_process if payload.auto_generate is None else payload.auto_generate
     try:
+        transport_settings = _resolve_user_transport_settings(current_user)
         internal_store_id = _resolve_scoped_store(
             db=db,
             current_user=current_user,
@@ -117,6 +154,7 @@ def fetch_messages(
                 tenant_id=current_user.tenant_id,
                 store_id=internal_store_id,
                 auto_process=auto_process,
+                actor_user_id=current_user.user_id,
             )
             return TaskQueuedResponse(task_id=task.id)
 
@@ -124,7 +162,7 @@ def fetch_messages(
             db=db,
             tenant_id=current_user.tenant_id,
             store_id=internal_store_id,
-            sync_service=MessageSyncService(),
+            sync_service=MessageSyncService(transport_settings=transport_settings),
             storage_service=MessageStorageService(),
         )
         message_meta_store.upsert_incoming_messages(
@@ -173,6 +211,7 @@ def fetch_messages(
                     send_service=MessageSendService(
                         tenant_id=current_user.tenant_id,
                         store_id=internal_store_id,
+                        transport_settings=transport_settings,
                     ),
                     force_regenerate=False,
                     allow_auto_send=True,
@@ -241,6 +280,7 @@ def get_message_detail(
     )
 
     try:
+        transport_settings = _resolve_user_transport_settings(current_user)
         message = get_message(
             db,
             message_id=message_id,
@@ -253,7 +293,7 @@ def get_message_detail(
             conversation_id=message.conversation_id,
         )
         if detail is None:
-            detail = get_email_by_message_id(message.conversation_id)
+            detail = get_email_by_message_id(message.conversation_id, settings=transport_settings)
             if detail:
                 message_meta_store.upsert_message_detail(
                     tenant_id=current_user.tenant_id,
@@ -307,16 +347,23 @@ def process_message(
     )
 
     if payload.async_mode:
+        if payload.allow_auto_send:
+            try:
+                _resolve_user_transport_settings(current_user)
+            except MailClientError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         task = process_message_task.delay(
             tenant_id=current_user.tenant_id,
             store_id=internal_store_id,
             message_id=message_id,
             force_regenerate=payload.force_regenerate,
             allow_auto_send=payload.allow_auto_send,
+            actor_user_id=current_user.user_id,
         )
         return TaskQueuedResponse(task_id=task.id)
 
     try:
+        transport_settings = _resolve_user_transport_settings(current_user)
         scoped_message = get_message(
             db,
             message_id=message_id,
@@ -345,6 +392,7 @@ def process_message(
             send_service=MessageSendService(
                 tenant_id=current_user.tenant_id,
                 store_id=internal_store_id,
+                transport_settings=transport_settings,
             ),
             force_regenerate=payload.force_regenerate,
             allow_auto_send=payload.allow_auto_send,
@@ -477,14 +525,20 @@ def send_message(
         )
 
     if payload.async_mode:
+        try:
+            _resolve_user_transport_settings(current_user)
+        except MailClientError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         task = send_approved_reply_task.delay(
             tenant_id=current_user.tenant_id,
             store_id=internal_store_id,
             message_id=message_id,
+            actor_user_id=current_user.user_id,
         )
         return TaskQueuedResponse(task_id=task.id)
 
     try:
+        transport_settings = _resolve_user_transport_settings(current_user)
         message, sp_result = send_approved_reply(
             db=db,
             message_id=message_id,
@@ -494,6 +548,7 @@ def send_message(
             send_service=MessageSendService(
                 tenant_id=current_user.tenant_id,
                 store_id=internal_store_id,
+                transport_settings=transport_settings,
             ),
         )
     except (MailClientError, RuntimeError) as exc:

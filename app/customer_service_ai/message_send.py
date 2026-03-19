@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .amazon_reply import reply_to_amazon_email
-from .mail_client import MailClientError, get_email_by_message_id
+from .mail_client import MailClientError, MailTransportSettings, get_email_by_message_id
 from .message_meta_store import MessageMetaStore, message_meta_store
 
 
@@ -14,10 +14,12 @@ class MessageSendService:
         tenant_id: int,
         store_id: int,
         meta_store: MessageMetaStore | None = None,
+        transport_settings: MailTransportSettings | None = None,
     ) -> None:
         self.tenant_id = tenant_id
         self.store_id = store_id
         self.meta_store = meta_store or message_meta_store
+        self.transport_settings = transport_settings
 
     def send(
         self,
@@ -35,7 +37,7 @@ class MessageSendService:
         )
         if detail is None:
             try:
-                fetched = get_email_by_message_id(conversation_id)
+                fetched = get_email_by_message_id(conversation_id, settings=self.transport_settings)
             except MailClientError as exc:
                 raise RuntimeError(str(exc)) from exc
             if fetched is not None:
@@ -57,6 +59,7 @@ class MessageSendService:
                 "message-id": str(detail.get("message_id") or detail.get("message-id") or conversation_id),
             },
             reply,
+            transport_settings=self.transport_settings,
         )
         if not bool(reply_result.get("success")):
             raise RuntimeError(str(reply_result.get("message") or "Failed to send Amazon reply"))

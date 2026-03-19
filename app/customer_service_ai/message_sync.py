@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 from .amazon_message_filter import filter_amazon_messages
-from .mail_client import get_unread_emails
+from .mail_client import MailTransportSettings, get_unread_emails
 from .message_types import IncomingBuyerMessage
 
 
 class MessageSyncService:
     """Fetch and normalize buyer messages from mailbox (IMAP)."""
 
+    def __init__(self, transport_settings: MailTransportSettings | None = None) -> None:
+        self.transport_settings = transport_settings
+
     def fetch_messages(self) -> list[IncomingBuyerMessage]:
-        raw_emails = get_unread_emails()
+        raw_emails = get_unread_emails(settings=self.transport_settings)
         filtered = filter_amazon_messages(raw_emails)
         incoming: list[IncomingBuyerMessage] = []
 
