@@ -4,7 +4,6 @@ import json
 from datetime import date, timedelta
 from dataclasses import dataclass
 from typing import Any
-import re
 
 from app.lingxing_client import LingxingApiError, LingxingClient, LingxingCredentials
 
@@ -119,13 +118,6 @@ class LingxingMessagingClient:
             sid=sid,
         )
 
-        if self.settings.lingxing_list_messages_email_field and not target_email:
-            raise MessagingAPIError(
-                "Missing store email for Lingxing mail list API. "
-                "Please configure CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_EMAIL_VALUE "
-                "or CUSTOMER_SERVICE_LINGXING_LIST_MESSAGES_EMAIL_MAP "
-                "(e.g. {\"lingxing_7469\":\"store@example.com\"})."
-            )
         if self.settings.lingxing_list_messages_flag_field:
             payload[self.settings.lingxing_list_messages_flag_field] = self.settings.lingxing_list_messages_flag_value
         if self.settings.lingxing_list_messages_email_field and target_email:
@@ -408,10 +400,6 @@ class LingxingMessagingClient:
                 return text
         return ""
 
-    @staticmethod
-    def _looks_like_email(value: str) -> bool:
-        return bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value or ""))
-
     def _resolve_target_email(
         self,
         *,
@@ -430,7 +418,7 @@ class LingxingMessagingClient:
         ]
         for candidate in email_candidates:
             candidate_text = str(candidate or "").strip()
-            if candidate_text and self._looks_like_email(candidate_text):
+            if candidate_text:
                 return candidate_text
         return ""
 
