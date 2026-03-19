@@ -1,0 +1,272 @@
+from __future__ import annotations
+
+import html
+import imaplib
+import os
+import re
+import smtplib
+from dataclasses import dataclass
+from email import policy
+from email.header import decode_header, make_header
+from email.message import EmailMessage, Message
+from email.parser import BytesParser, Parser
+from email.utils import make_msgid
+from typing import Any
+
+
+class MailClientError(RuntimeError):
+    """Raised when IMAP/SMTP operations fail."""
+
+
+@dataclass(frozen=True)
+class MailTransportSettings:
+    """Transport settings loaded from environment variables."""
+
+    username: str
+    password: str
+    imap_host: str
+    imap_port: int
+    imap_mailbox: str
+    smtp_host: str
+    smtp_port: int
+    smtp_use_ssl: bool
+    smtp_starttls: bool
+    timeout_seconds: int
+
+
+def load_mail_transport_settings() -> MailTransportSettings:
+    """Load IMAP/SMTP settings from environment."""
+
+    username = os.getenv("CUSTOMER_SERVICE_EMAIL_USERNAME", "").strip()
+    password = os.getenv("CUSTOMER_SERVICE_EMAIL_PASSWORD", "").strip()
+    imap_host = os.getenv("CUSTOMER_SERVICE_EMAIL_IMAP_HOST", "").strip()
+    smtp_host = os.getenv("CUSTOMER_SERVICE_EMAIL_SMTP_HOST", "").strip()
+
+    if not username or not password:
+        raise MailClientError(
+            "Missing email credentials. Please configure CUSTOMER_SERVICE_EMAIL_USERNAME and "
+            "CUSTOMER_SERVICE_EMAIL_PASSWORD."
+        )
+    if not imap_host:
+        raise MailClientError("Missing CUSTOMER_SERVICE_EMAIL_IMAP_HOST.")
+    if not smtp_host:
+        raise MailClientError("Missing CUSTOMER_SERVICE_EMAIL_SMTP_HOST.")
+
+    return MailTransportSettings(
+        username=username,
+        password=password,
+        imap_host=imap_host,
+        imap_port=_int_env("CUSTOMER_SERVICE_EMAIL_IMAP_PORT", 993, minimum=1),
+        imap_mailbox=os.getenv("CUSTOMER_SERVICE_EMAIL_IMAP_MAILBOX", "INBOX").strip() or "INBOX",
+        smtp_host=smtp_host,
+        smtp_port=_int_env("CUSTOMER_SERVICE_EMAIL_SMTP_PORT", 465, minimum=1),
+        smtp_use_ssl=_bool_env("CUSTOMER_SERVICE_EMAIL_SMTP_USE_SSL", True),
+        smtp_starttls=_bool_env("CUSTOMER_SERVICE_EMAIL_SMTP_STARTTLS", False),
+        timeout_seconds=_int_env("CUSTOMER_SERVICE_EMAIL_TIMEOUT_SECONDS", 30, minimum=1),
+    )
+
+
+def parse_email(raw_email: bytes | str) -> dict[str, str]:
+    """Parse raw RFC822 email bytes/string into normalized fields."""
+
+    message = _parse_raw_message(raw_email)
+    return {
+        "subject": _decode_header_value(message.get("Subject")),
+        "from": _decode_header_value(message.get("From")),
+        "reply_to": _decode_header_value(message.get("Reply-To")),
+        "message_id": _decode_header_value(message.get("Message-ID")),
+        "body": _extract_plain_text_body(message),
+    }
+
+
+def get_unread_emails() -> list[dict[str, str]]:
+    """Fetch unread emails from IMAP mailbox using UNSEEN query."""
+
+    settings = load_mail_transport_settings()
+    records: list[dict[str, str]] = []
+
+    try:
+        with imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port) as client:
+            client.login(settings.username, settings.password)
+            status, _ = client.select(settings.imap_mailbox)
+            if status != "OK":
+                raise MailClientError(f"Failed to select mailbox: {settings.imap_mailbox}")
+
+            status, data = client.search(None, "UNSEEN")
+            if status != "OK":
+                raise MailClientError("Failed to search unread emails.")
+
+            message_ids = data[0].split() if data and data[0] else []
+            for message_id in message_ids:
+                fetch_status, payload = client.fetch(message_id, "(BODY.PEEK[])")
+                if fetch_status != "OK":
+                    continue
+                for part in payload:
+                    if isinstance(part, tuple) and len(part) > 1:
+                        records.append(parse_email(part[1]))
+                        break
+    except imaplib.IMAP4.error as exc:
+        raise MailClientError(f"IMAP operation failed: {exc}") from exc
+    except OSError as exc:
+        raise MailClientError(f"IMAP network error: {exc}") from exc
+
+    return records
+
+
+def send_email(
+    to_address: str,
+    subject: str,
+    body: str,
+    headers: dict[str, Any] | None = None,
+) -> str:
+    """Send an email via SMTP and return the message-id."""
+
+    settings = load_mail_transport_settings()
+    if not to_address.strip():
+        raise MailClientError("to_address cannot be empty")
+
+    message = EmailMessage()
+    message["From"] = settings.username
+    message["To"] = to_address.strip()
+    message["Subject"] = subject
+    message["Message-ID"] = make_msgid()
+
+    for key, value in (headers or {}).items():
+        normalized_key = str(key).strip()
+        if not normalized_key:
+            continue
+        if normalized_key.lower() == "message-id":
+            message.replace_header("Message-ID", str(value))
+            continue
+        if normalized_key in message:
+            message.replace_header(normalized_key, str(value))
+        else:
+            message[normalized_key] = str(value)
+
+    message.set_content(body or "")
+
+    try:
+        if settings.smtp_use_ssl:
+            with smtplib.SMTP_SSL(
+                settings.smtp_host,
+                settings.smtp_port,
+                timeout=settings.timeout_seconds,
+            ) as client:
+                client.login(settings.username, settings.password)
+                client.send_message(message)
+        else:
+            with smtplib.SMTP(
+                settings.smtp_host,
+                settings.smtp_port,
+                timeout=settings.timeout_seconds,
+            ) as client:
+                client.ehlo()
+                if settings.smtp_starttls:
+                    client.starttls()
+                    client.ehlo()
+                client.login(settings.username, settings.password)
+                client.send_message(message)
+    except smtplib.SMTPException as exc:
+        raise MailClientError(f"SMTP operation failed: {exc}") from exc
+    except OSError as exc:
+        raise MailClientError(f"SMTP network error: {exc}") from exc
+
+    return str(message["Message-ID"] or "").strip()
+
+
+def _parse_raw_message(raw_email: bytes | str) -> Message:
+    if isinstance(raw_email, bytes):
+        return BytesParser(policy=policy.default).parsebytes(raw_email)
+    if isinstance(raw_email, str):
+        return Parser(policy=policy.default).parsestr(raw_email)
+    raise TypeError("raw_email must be bytes or str")
+
+
+def _decode_header_value(value: str | None) -> str:
+    if not value:
+        return ""
+    try:
+        return str(make_header(decode_header(value))).strip()
+    except Exception:
+        return str(value).strip()
+
+
+def _extract_plain_text_body(message: Message) -> str:
+    plain_parts: list[str] = []
+    html_parts: list[str] = []
+
+    if message.is_multipart():
+        for part in message.walk():
+            disposition = str(part.get_content_disposition() or "").lower()
+            if disposition == "attachment":
+                continue
+            content_type = str(part.get_content_type() or "").lower()
+            if content_type == "text/plain":
+                text = _extract_part_text(part)
+                if text:
+                    plain_parts.append(text)
+            elif content_type == "text/html":
+                text = _extract_part_text(part)
+                if text:
+                    html_parts.append(text)
+    else:
+        content_type = str(message.get_content_type() or "").lower()
+        text = _extract_part_text(message)
+        if content_type == "text/html" and text:
+            html_parts.append(text)
+        elif text:
+            plain_parts.append(text)
+
+    if plain_parts:
+        return "\n".join(item.strip() for item in plain_parts if item.strip()).strip()
+    if html_parts:
+        return _html_to_text("\n".join(html_parts))
+    return ""
+
+
+def _extract_part_text(part: Message) -> str:
+    try:
+        content = part.get_content()
+        if isinstance(content, str):
+            return content
+    except Exception:
+        pass
+
+    payload = part.get_payload(decode=True)
+    if payload is None:
+        raw_payload = part.get_payload()
+        return str(raw_payload or "")
+
+    charset = part.get_content_charset() or "utf-8"
+    try:
+        return payload.decode(charset, errors="replace")
+    except LookupError:
+        return payload.decode("utf-8", errors="replace")
+
+
+def _html_to_text(value: str) -> str:
+    text = re.sub(r"(?is)<(script|style).*?>.*?</\1>", "", value)
+    text = re.sub(r"(?s)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?s)</p>", "\n", text)
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    text = html.unescape(text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _int_env(name: str, default: int, *, minimum: int = 0) -> int:
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = default
+    return max(minimum, value)
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+

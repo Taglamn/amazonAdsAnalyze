@@ -1,3 +1,15 @@
 from __future__ import annotations
 
-__all__ = []
+from .mail_client import (
+    MailClientError,
+    get_unread_emails,
+    parse_email,
+    send_email,
+)
+
+__all__ = [
+    "MailClientError",
+    "get_unread_emails",
+    "parse_email",
+    "send_email",
+]
