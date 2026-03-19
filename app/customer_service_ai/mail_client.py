@@ -66,20 +66,28 @@ def load_mail_transport_settings() -> MailTransportSettings:
     )
 
 
-def parse_email(raw_email: bytes | str) -> dict[str, str]:
+def parse_email(raw_email: bytes | str) -> dict[str, Any]:
     """Parse raw RFC822 email bytes/string into normalized fields."""
 
     message = _parse_raw_message(raw_email)
+    headers: dict[str, str] = {}
+    for key, value in message.items():
+        normalized_key = str(key or "").strip()
+        if not normalized_key:
+            continue
+        headers[normalized_key] = _decode_header_value(value)
+
     return {
         "subject": _decode_header_value(message.get("Subject")),
         "from": _decode_header_value(message.get("From")),
         "reply_to": _decode_header_value(message.get("Reply-To")),
         "message_id": _decode_header_value(message.get("Message-ID")),
         "body": _extract_plain_text_body(message),
+        "headers": headers,
     }
 
 
-def get_unread_emails() -> list[dict[str, str]]:
+def get_unread_emails() -> list[dict[str, Any]]:
     """Fetch unread emails from IMAP mailbox using UNSEEN query."""
 
     settings = load_mail_transport_settings()
@@ -269,4 +277,3 @@ def _bool_env(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
-
