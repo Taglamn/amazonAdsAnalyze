@@ -9,6 +9,7 @@ from typing import Any, Iterable
 logger = logging.getLogger(__name__)
 
 AMAZON_SENDER_KEYWORDS = ("amazon.com", "marketplace.amazon.com")
+AMAZON_REPLY_TO_KEYWORDS = ("amazon.com", "marketplace.amazon.com", "buyer-seller-messaging")
 AMAZON_SUBJECT_KEYWORDS = ("buyer-seller messaging", "you have received a new message")
 AMAZON_HEADER_HINTS = ("x-amazon", "amazon")
 BODY_CUTOFF_MARKERS = (
@@ -62,6 +63,7 @@ def filter_amazon_messages(
 
         reject_reason = _reject_reason(
             sender=sender,
+            reply_to=reply_to,
             subject=subject,
             message_id=message_id,
             headers=headers,
@@ -98,12 +100,14 @@ def filter_amazon_messages(
 def _reject_reason(
     *,
     sender: str,
+    reply_to: str,
     subject: str,
     message_id: str,
     headers: dict[str, str],
     blocked: AmazonFilterBlacklist,
 ) -> str:
     sender_l = sender.lower()
+    reply_to_l = reply_to.lower()
     subject_l = subject.lower()
 
     if _matches_any(sender_l, blocked.sender_contains):
@@ -113,12 +117,12 @@ def _reject_reason(
     if _headers_match(headers, blocked.header_contains):
         return "blacklist_header"
 
-    if not _matches_any(sender_l, AMAZON_SENDER_KEYWORDS):
-        return "sender_not_amazon"
-    if not _matches_any(subject_l, AMAZON_SUBJECT_KEYWORDS):
-        return "subject_not_buyer_seller"
-    if not _has_amazon_header(headers):
-        return "missing_amazon_header"
+    sender_is_amazon = _matches_any(sender_l, AMAZON_SENDER_KEYWORDS)
+    reply_to_is_amazon = _matches_any(reply_to_l, AMAZON_REPLY_TO_KEYWORDS)
+    header_is_amazon = _has_amazon_header(headers)
+    subject_has_amazon_hint = _matches_any(subject_l, AMAZON_SUBJECT_KEYWORDS)
+    if not (sender_is_amazon or reply_to_is_amazon or header_is_amazon or subject_has_amazon_hint):
+        return "missing_amazon_signals"
     if not _to_text(message_id):
         return "missing_message_id"
     return ""

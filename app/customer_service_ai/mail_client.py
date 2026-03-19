@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import imaplib
+import logging
 import os
 import re
 import ssl
@@ -13,6 +14,9 @@ from email.message import EmailMessage, Message
 from email.parser import BytesParser, Parser
 from email.utils import make_msgid
 from typing import Any
+
+logger = logging.getLogger(__name__)
+DEFAULT_RECENT_FALLBACK_LIMIT = 50
 
 
 class MailClientError(RuntimeError):
@@ -114,6 +118,26 @@ def get_unread_emails_with_settings(settings: MailTransportSettings) -> list[dic
             raise MailClientError("Failed to search unread emails.")
 
         message_ids = data[0].split() if data and data[0] else []
+        mark_seen = True
+        if not message_ids:
+            fallback_limit = _int_env(
+                "CUSTOMER_SERVICE_EMAIL_FALLBACK_RECENT_LIMIT",
+                DEFAULT_RECENT_FALLBACK_LIMIT,
+                minimum=1,
+            )
+            status, all_data = client.search(None, "ALL")
+            if status != "OK":
+                raise MailClientError("Failed to search recent emails.")
+            all_ids = all_data[0].split() if all_data and all_data[0] else []
+            message_ids = all_ids[-fallback_limit:]
+            mark_seen = False
+            logger.info(
+                "imap_unseen_empty_fallback_recent mailbox=%s fallback_limit=%s matched=%s",
+                settings.imap_mailbox,
+                fallback_limit,
+                len(message_ids),
+            )
+
         for message_id in message_ids:
             fetch_status, payload = client.fetch(message_id, "(BODY.PEEK[])")
             if fetch_status != "OK":
@@ -124,7 +148,7 @@ def get_unread_emails_with_settings(settings: MailTransportSettings) -> list[dic
                     records.append(parse_email(part[1]))
                     parsed_ok = True
                     break
-            if parsed_ok:
+            if parsed_ok and mark_seen:
                 try:
                     client.store(message_id, "+FLAGS", "\\Seen")
                 except Exception:
