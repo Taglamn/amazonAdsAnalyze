@@ -48,6 +48,10 @@ const I18N = {
       buyerLabel: 'Buyer',
       sellerLabel: 'Our Reply',
       uploadAttachment: 'Upload Attachment',
+      incomingAttachments: 'Buyer Attachments',
+      downloadAttachment: 'Download',
+      previewUnavailable: 'Preview unavailable',
+      imageOnlyHint: 'Only image attachments are supported',
       attachmentEmpty: 'No attachment selected',
       removeAttachment: 'Remove',
       sentTag: 'Sent',
@@ -297,6 +301,10 @@ const I18N = {
       buyerLabel: '买家消息',
       sellerLabel: '历史回复',
       uploadAttachment: '上传附件',
+      incomingAttachments: '买家附件',
+      downloadAttachment: '下载',
+      previewUnavailable: '无法预览',
+      imageOnlyHint: '仅支持图片附件',
       attachmentEmpty: '暂未选择附件',
       removeAttachment: '移除',
       sentTag: '已发送',
@@ -1007,6 +1015,28 @@ function readFileAsBase64(file) {
   });
 }
 
+function isImageAttachment(item) {
+  const contentType = String(item?.content_type || '').toLowerCase();
+  if (contentType.startsWith('image/')) return true;
+  const name = String(item?.name || '').toLowerCase();
+  return /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(name);
+}
+
+function buildAttachmentDataUrl(item) {
+  const content = String(item?.content_base64 || '').trim();
+  if (!content) return '';
+  const contentType = String(item?.content_type || '').trim() || 'application/octet-stream';
+  return `data:${contentType};base64,${content}`;
+}
+
+function formatAttachmentSize(size) {
+  const value = Number(size || 0);
+  if (!Number.isFinite(value) || value <= 0) return '';
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${value} B`;
+}
+
 function LingxingSyncTable({ rows, t, language, sortKey, sortDir, onSort }) {
   if (!rows.length) {
     return html`<p className="mt-2 rounded-lg bg-brand-50 p-3 text-sm text-brand-800">${t.playbook.syncTableEmpty}</p>`;
@@ -1228,6 +1258,9 @@ function App() {
   const selectedHistoryReply = String(selectedMailRow?.final_reply || selectedMailRow?.ai_reply || '').trim();
   const selectedDraft = selectedMailRow ? (replyDrafts[selectedMailRow.id] || '') : '';
   const selectedAttachments = selectedMailRow ? (mailAttachmentMap[selectedMailRow.id] || []) : [];
+  const selectedIncomingAttachments = Array.isArray(selectedMailDetail?.attachments)
+    ? selectedMailDetail.attachments.filter((item) => item && typeof item === 'object')
+    : [];
 
   const fileTimeTag = () => new Date().toISOString().replace(/[:.]/g, '-');
 
@@ -1972,8 +2005,13 @@ function App() {
     try {
       const prepared = [];
       for (const file of Array.from(files)) {
+        if (!String(file.type || '').toLowerCase().startsWith('image/')) {
+          setError(t.autoReply.imageOnlyHint);
+          continue;
+        }
         prepared.push(await readFileAsBase64(file));
       }
+      if (!prepared.length) return;
       setMailAttachmentMap((prev) => ({
         ...prev,
         [messageId]: [...(prev[messageId] || []), ...prepared],
@@ -3339,6 +3377,45 @@ function App() {
                                         : html`<p className="whitespace-pre-wrap break-words text-sm text-brand-800">${selectedBuyerText || selectedMailRow.buyer_message || '-'}</p>`}
                                     </div>
 
+                                    ${selectedIncomingAttachments.length
+                                      ? html`
+                                          <div className="max-w-[85%] rounded-xl border border-brand-100 bg-white p-3">
+                                            <p className="mb-2 text-xs font-semibold text-brand-700">${t.autoReply.incomingAttachments}</p>
+                                            <div className="grid gap-2 sm:grid-cols-2">
+                                              ${selectedIncomingAttachments.map((item, idx) => {
+                                                const dataUrl = buildAttachmentDataUrl(item);
+                                                const isImage = isImageAttachment(item);
+                                                const canPreview = Boolean(isImage && dataUrl);
+                                                const name = String(item?.name || `attachment_${idx + 1}`);
+                                                const sizeText = formatAttachmentSize(item?.size);
+                                                return html`
+                                                  <div key=${`incoming_attachment_${selectedMailRow.id}_${idx}`} className="rounded-md border border-brand-100 bg-brand-50/30 p-2">
+                                                    ${canPreview
+                                                      ? html`<img src=${dataUrl} alt=${name} className="h-28 w-full rounded object-contain bg-white" />`
+                                                      : html`<div className="flex h-28 items-center justify-center rounded bg-white text-xs text-brand-500">${t.autoReply.previewUnavailable}</div>`}
+                                                    <p className="mt-2 truncate text-xs font-semibold text-brand-800">${name}</p>
+                                                    <div className="mt-1 flex items-center justify-between gap-2">
+                                                      <span className="text-[11px] text-brand-500">${sizeText || '-'}</span>
+                                                      ${dataUrl
+                                                        ? html`
+                                                            <a
+                                                              className="text-[11px] font-semibold text-brand-700 underline"
+                                                              href=${dataUrl}
+                                                              download=${name}
+                                                            >
+                                                              ${t.autoReply.downloadAttachment}
+                                                            </a>
+                                                          `
+                                                        : null}
+                                                    </div>
+                                                  </div>
+                                                `;
+                                              })}
+                                            </div>
+                                          </div>
+                                        `
+                                      : null}
+
                                     ${selectedMailRow.status === 'sent' || selectedMailRow.status === 'auto_sent'
                                       ? html`
                                           <div className="ml-auto max-w-[85%] rounded-xl border border-green-200 bg-green-50 p-3">
@@ -3355,6 +3432,7 @@ function App() {
                                         <input
                                           type="file"
                                           multiple
+                                          accept="image/*"
                                           className="hidden"
                                           onChange=${(e) => {
                                             onUploadAttachments(selectedMailRow.id, e.target.files);

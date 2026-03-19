@@ -581,13 +581,12 @@ def send_message(
         external_store_id=external_store_id,
     )
 
-    if payload.attachments:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Attachments are not supported in SMTP mode",
-        )
-
     if payload.async_mode:
+        if payload.attachments:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Attachments are only supported when async_mode=false",
+            )
         try:
             _resolve_user_transport_settings(
                 current_user,

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 import html
 import imaplib
 import logging
+import mimetypes
 import os
 import re
 import ssl
@@ -17,6 +19,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 DEFAULT_RECENT_FALLBACK_LIMIT = 50
+ATTACHMENT_PREVIEW_MAX_BYTES = 2 * 1024 * 1024
 
 
 class MailClientError(RuntimeError):
@@ -245,6 +248,7 @@ def send_email(
     subject: str,
     body: str,
     headers: dict[str, Any] | None = None,
+    attachments: list[dict[str, Any]] | None = None,
     settings: MailTransportSettings | None = None,
 ) -> str:
     """Send an email via SMTP and return the message-id."""
@@ -272,6 +276,7 @@ def send_email(
             message[normalized_key] = str(value)
 
     message.set_content(body or "")
+    _add_attachments_to_message(message, attachments or [])
 
     _smtp_send_with_fallback(settings, message)
 
@@ -541,18 +546,45 @@ def _extract_attachments(message: Message) -> list[dict[str, Any]]:
     attachments: list[dict[str, Any]] = []
     for part in message.walk():
         disposition = str(part.get_content_disposition() or "").lower()
-        if disposition != "attachment":
-            continue
         filename = _decode_header_value(part.get_filename())
+        if disposition not in {"attachment", "inline"} and not filename:
+            continue
         payload = part.get_payload(decode=True) or b""
+        content_type = str(part.get_content_type() or "")
+        entry: dict[str, Any] = {
+            "name": filename or "attachment",
+            "content_type": content_type,
+            "size": len(payload),
+        }
+        if content_type.lower().startswith("image/") and payload and len(payload) <= ATTACHMENT_PREVIEW_MAX_BYTES:
+            entry["content_base64"] = base64.b64encode(payload).decode("ascii")
         attachments.append(
-            {
-                "name": filename,
-                "content_type": str(part.get_content_type() or ""),
-                "size": len(payload),
-            }
+            entry
         )
     return attachments
+
+
+def _add_attachments_to_message(message: EmailMessage, attachments: list[dict[str, Any]]) -> None:
+    for index, item in enumerate(attachments):
+        if not isinstance(item, dict):
+            continue
+        raw_content = str(item.get("content_base64") or "").strip()
+        if not raw_content:
+            raise MailClientError(f"Attachment #{index + 1} is missing content_base64")
+        try:
+            payload = base64.b64decode(raw_content, validate=True)
+        except Exception as exc:  # noqa: BLE001
+            raise MailClientError(f"Attachment #{index + 1} content_base64 is invalid") from exc
+
+        filename = str(item.get("name") or "").strip() or f"attachment_{index + 1}"
+        content_type = str(item.get("content_type") or "").strip()
+        if not content_type:
+            guessed, _ = mimetypes.guess_type(filename)
+            content_type = guessed or "application/octet-stream"
+        if "/" not in content_type:
+            content_type = "application/octet-stream"
+        maintype, subtype = content_type.split("/", 1)
+        message.add_attachment(payload, maintype=maintype, subtype=subtype, filename=filename)
 
 
 def _extract_part_text(part: Message) -> str:

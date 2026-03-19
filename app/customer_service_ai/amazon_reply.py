@@ -32,6 +32,7 @@ def reply_to_amazon_email(
     *,
     transport_settings: MailTransportSettings | None = None,
     enforce_compliance: bool = True,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Reply through Amazon Buyer-Seller Messaging relay address.
@@ -79,6 +80,7 @@ def reply_to_amazon_email(
             subject=final_subject,
             body=_build_plain_text_reply(body),
             headers=headers,
+            attachments=attachments or [],
             settings=transport_settings,
         )
     except MailClientError as exc:
