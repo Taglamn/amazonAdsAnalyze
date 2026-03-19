@@ -96,6 +96,90 @@ class UserMailSettingsStore:
                 "Mail server settings are incomplete for current user. Please configure IMAP/SMTP settings first."
             )
 
+        return self._to_transport_settings(
+            username=username,
+            password=password,
+            imap_host=imap_host,
+            imap_port=imap_port,
+            imap_mailbox=imap_mailbox,
+            smtp_host=smtp_host,
+            smtp_port=smtp_port,
+            smtp_use_ssl=bool(smtp_use_ssl),
+            smtp_starttls=bool(smtp_starttls),
+            timeout_seconds=timeout_seconds,
+        )
+
+    def build_transport_settings_for_test(
+        self,
+        *,
+        tenant_id: int,
+        user_id: int,
+        payload: dict[str, Any],
+    ) -> MailTransportSettings:
+        """Build test transport settings from payload + existing stored password fallback."""
+
+        with self._lock:
+            existing = self._read_locked(tenant_id=tenant_id, user_id=user_id)
+
+        merged = dict(existing)
+        for key in (
+            "username",
+            "imap_host",
+            "imap_mailbox",
+            "smtp_host",
+            "imap_port",
+            "smtp_port",
+            "smtp_use_ssl",
+            "smtp_starttls",
+            "timeout_seconds",
+        ):
+            if key in payload:
+                merged[key] = payload.get(key)
+
+        if "password" in payload:
+            raw_password = str(payload.get("password") or "")
+            if raw_password.strip():
+                merged["password"] = raw_password
+            elif not str(merged.get("password") or "").strip():
+                merged["password"] = ""
+
+        self._validate_merged(merged)
+
+        return self._to_transport_settings(
+            username=str(merged.get("username") or "").strip(),
+            password=str(merged.get("password") or "").strip(),
+            imap_host=str(merged.get("imap_host") or "").strip(),
+            imap_port=_to_int(merged.get("imap_port"), 993),
+            imap_mailbox=str(merged.get("imap_mailbox") or "INBOX").strip() or "INBOX",
+            smtp_host=str(merged.get("smtp_host") or "").strip(),
+            smtp_port=_to_int(merged.get("smtp_port"), 465),
+            smtp_use_ssl=_to_bool(merged.get("smtp_use_ssl"), True),
+            smtp_starttls=_to_bool(merged.get("smtp_starttls"), False),
+            timeout_seconds=_to_int(merged.get("timeout_seconds"), 30),
+        )
+
+    def _validate_merged(self, data: dict[str, Any]) -> None:
+        required_fields = ("username", "imap_host", "smtp_host", "imap_mailbox")
+        missing = [name for name in required_fields if not str(data.get(name) or "").strip()]
+        if missing:
+            raise MailClientError(f"Missing required fields: {', '.join(missing)}")
+        if not str(data.get("password") or "").strip():
+            raise MailClientError("Password is required (or keep existing password by leaving it blank).")
+
+    @staticmethod
+    def _to_transport_settings(
+        *,
+        username: str,
+        password: str,
+        imap_host: str,
+        imap_port: int,
+        imap_mailbox: str,
+        smtp_host: str,
+        smtp_port: int,
+        smtp_use_ssl: bool,
+        smtp_starttls: bool,
+        timeout_seconds: int,
+    ) -> MailTransportSettings:
         return MailTransportSettings(
             username=username,
             password=password,
@@ -108,14 +192,6 @@ class UserMailSettingsStore:
             smtp_starttls=bool(smtp_starttls),
             timeout_seconds=max(1, int(timeout_seconds)),
         )
-
-    def _validate_merged(self, data: dict[str, Any]) -> None:
-        required_fields = ("username", "imap_host", "smtp_host", "imap_mailbox")
-        missing = [name for name in required_fields if not str(data.get(name) or "").strip()]
-        if missing:
-            raise MailClientError(f"Missing required fields: {', '.join(missing)}")
-        if not str(data.get("password") or "").strip():
-            raise MailClientError("Password is required (or keep existing password by leaving it blank).")
 
     def _path(self, *, tenant_id: int, user_id: int) -> Path:
         return self.base_dir / f"tenant_{tenant_id}_user_{user_id}.json"
@@ -156,4 +232,3 @@ def _to_bool(value: Any, default: bool) -> bool:
 
 
 user_mail_settings_store = UserMailSettingsStore()
-

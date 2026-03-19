@@ -138,3 +138,9 @@ class MailServerSettingsUpdateRequest(BaseModel):
     smtp_use_ssl: bool = True
     smtp_starttls: bool = False
     timeout_seconds: int = Field(default=30, ge=1, le=300)
+
+
+class MailServerSettingsTestResponse(BaseModel):
+    imap_ok: bool = True
+    smtp_ok: bool = True
+    message: str = ""

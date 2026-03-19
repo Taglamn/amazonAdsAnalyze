@@ -141,6 +141,51 @@ def get_unread_emails(settings: MailTransportSettings | None = None) -> list[dic
     return get_unread_emails_with_settings(effective)
 
 
+def test_mail_server_login(settings: MailTransportSettings) -> dict[str, Any]:
+    """Test IMAP/SMTP login flow with provided transport settings."""
+
+    try:
+        with imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port) as client:
+            client.login(settings.username, settings.password)
+            status, _ = client.select(settings.imap_mailbox)
+            if status != "OK":
+                raise MailClientError(f"Failed to select mailbox: {settings.imap_mailbox}")
+    except imaplib.IMAP4.error as exc:
+        raise MailClientError(f"IMAP login test failed: {exc}") from exc
+    except OSError as exc:
+        raise MailClientError(f"IMAP network test failed: {exc}") from exc
+
+    try:
+        if settings.smtp_use_ssl:
+            with smtplib.SMTP_SSL(
+                settings.smtp_host,
+                settings.smtp_port,
+                timeout=settings.timeout_seconds,
+            ) as client:
+                client.login(settings.username, settings.password)
+        else:
+            with smtplib.SMTP(
+                settings.smtp_host,
+                settings.smtp_port,
+                timeout=settings.timeout_seconds,
+            ) as client:
+                client.ehlo()
+                if settings.smtp_starttls:
+                    client.starttls()
+                    client.ehlo()
+                client.login(settings.username, settings.password)
+    except smtplib.SMTPException as exc:
+        raise MailClientError(f"SMTP login test failed: {exc}") from exc
+    except OSError as exc:
+        raise MailClientError(f"SMTP network test failed: {exc}") from exc
+
+    return {
+        "imap_ok": True,
+        "smtp_ok": True,
+        "message": "IMAP/SMTP login test passed.",
+    }
+
+
 def get_email_by_message_id(message_id: str, settings: MailTransportSettings | None = None) -> dict[str, Any] | None:
     """Fetch one email from mailbox using Message-ID header lookup."""
 

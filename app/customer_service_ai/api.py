@@ -16,7 +16,7 @@ from .auto_reply_engine import AutoReplyEngine
 from .db import MessageStatus
 from .human_review import HumanReviewEngine
 from .llm import CustomerServiceLLM, LLMGenerationError
-from .mail_client import MailClientError, MailTransportSettings, get_email_by_message_id
+from .mail_client import MailClientError, MailTransportSettings, get_email_by_message_id, test_mail_server_login
 from .mail_settings_store import user_mail_settings_store
 from .message_classification import MessageClassificationService
 from .message_send import MessageSendService
@@ -31,6 +31,7 @@ from .schemas import (
     FetchMessagesRequest,
     InlineFetchResponse,
     MailServerSettingsResponse,
+    MailServerSettingsTestResponse,
     MailServerSettingsUpdateRequest,
     MailDetailResponse,
     MessageOperationResponse,
@@ -130,6 +131,23 @@ def update_mail_settings(
     except MailClientError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return MailServerSettingsResponse(**settings)
+
+
+@router.post("/mail-settings/test", response_model=MailServerSettingsTestResponse)
+def test_mail_settings(
+    payload: MailServerSettingsUpdateRequest,
+    current_user: User = CurrentUserDependency,
+):
+    try:
+        transport_settings = user_mail_settings_store.build_transport_settings_for_test(
+            tenant_id=current_user.tenant_id,
+            user_id=current_user.user_id,
+            payload=payload.model_dump(),
+        )
+        result = test_mail_server_login(transport_settings)
+    except MailClientError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return MailServerSettingsTestResponse(**result)
 
 
 @router.post("/stores/{external_store_id}/messages/fetch", response_model=TaskQueuedResponse | InlineFetchResponse)

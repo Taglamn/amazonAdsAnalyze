@@ -61,7 +61,9 @@ const I18N = {
       configHint: 'These settings are bound to the current login account only.',
       configLoadBtn: 'Load Settings',
       configSaveBtn: 'Save Settings',
+      configTestBtn: 'Login Test',
       configSaved: 'Mail server settings saved.',
+      configTestPassed: 'IMAP/SMTP login test passed.',
       configUsername: 'Sender Account',
       configPassword: 'Password',
       configPasswordKeepHint: 'Leave blank to keep existing password.',
@@ -308,7 +310,9 @@ const I18N = {
       configHint: '该配置仅作用于当前登录账号，不影响其他用户。',
       configLoadBtn: '加载配置',
       configSaveBtn: '保存配置',
+      configTestBtn: '登录测试',
       configSaved: '邮件服务器配置已保存。',
+      configTestPassed: 'IMAP/SMTP 登录测试通过。',
       configUsername: '发件账号',
       configPassword: '密码',
       configPasswordKeepHint: '留空表示沿用已保存密码。',
@@ -1182,6 +1186,7 @@ function App() {
   const [mailNotice, setMailNotice] = useState('');
   const [autoReplyTab, setAutoReplyTab] = useState('inbox');
   const [mailConfigSaving, setMailConfigSaving] = useState(false);
+  const [mailConfigTesting, setMailConfigTesting] = useState(false);
   const [mailConfig, setMailConfig] = useState({
     username: '',
     password: '',
@@ -1744,23 +1749,25 @@ function App() {
     }
   };
 
+  const buildMailServerPayload = () => ({
+    username: String(mailConfig.username || '').trim(),
+    password: String(mailConfig.password || ''),
+    imap_host: String(mailConfig.imap_host || '').trim(),
+    imap_port: Number(mailConfig.imap_port || 993),
+    imap_mailbox: String(mailConfig.imap_mailbox || 'INBOX').trim(),
+    smtp_host: String(mailConfig.smtp_host || '').trim(),
+    smtp_port: Number(mailConfig.smtp_port || 465),
+    smtp_use_ssl: Boolean(mailConfig.smtp_use_ssl),
+    smtp_starttls: Boolean(mailConfig.smtp_starttls),
+    timeout_seconds: Number(mailConfig.timeout_seconds || 30),
+  });
+
   const onSaveMailServerSettings = async () => {
     setMailConfigSaving(true);
     setMailNotice('');
     setError('');
     try {
-      const payload = {
-        username: String(mailConfig.username || '').trim(),
-        password: String(mailConfig.password || ''),
-        imap_host: String(mailConfig.imap_host || '').trim(),
-        imap_port: Number(mailConfig.imap_port || 993),
-        imap_mailbox: String(mailConfig.imap_mailbox || 'INBOX').trim(),
-        smtp_host: String(mailConfig.smtp_host || '').trim(),
-        smtp_port: Number(mailConfig.smtp_port || 465),
-        smtp_use_ssl: Boolean(mailConfig.smtp_use_ssl),
-        smtp_starttls: Boolean(mailConfig.smtp_starttls),
-        timeout_seconds: Number(mailConfig.timeout_seconds || 30),
-      };
+      const payload = buildMailServerPayload();
       const data = await fetchJson(
         '/api/customer-service/mail-settings',
         {
@@ -1781,6 +1788,29 @@ function App() {
       setError(err.message);
     } finally {
       setMailConfigSaving(false);
+    }
+  };
+
+  const onTestMailServerSettings = async () => {
+    setMailConfigTesting(true);
+    setMailNotice('');
+    setError('');
+    try {
+      const payload = buildMailServerPayload();
+      const data = await fetchJson(
+        '/api/customer-service/mail-settings/test',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        },
+        t.requestFailed,
+      );
+      setMailNotice(data.message || t.autoReply.configTestPassed);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setMailConfigTesting(false);
     }
   };
 
@@ -3465,20 +3495,29 @@ function App() {
                         <div className="mt-4 flex flex-wrap gap-2">
                           <button
                             onClick=${loadMailServerSettings}
-                            disabled=${Boolean(mailConfigSaving)}
+                            disabled=${Boolean(mailConfigSaving) || Boolean(mailConfigTesting)}
                             className="rounded-md border border-brand-300 bg-white px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50 disabled:cursor-not-allowed disabled:border-brand-100 disabled:bg-brand-50 disabled:text-brand-300"
                           >
                             ${t.autoReply.configLoadBtn}
                           </button>
                           <button
+                            onClick=${onTestMailServerSettings}
+                            disabled=${Boolean(mailConfigSaving) || Boolean(mailConfigTesting)}
+                            className="rounded-md border border-brand-300 bg-white px-4 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50 disabled:cursor-not-allowed disabled:border-brand-100 disabled:bg-brand-50 disabled:text-brand-300"
+                          >
+                            ${t.autoReply.configTestBtn}
+                          </button>
+                          <button
                             onClick=${onSaveMailServerSettings}
-                            disabled=${Boolean(mailConfigSaving)}
+                            disabled=${Boolean(mailConfigSaving) || Boolean(mailConfigTesting)}
                             className="rounded-md bg-brand-700 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-brand-200"
                           >
                             ${t.autoReply.configSaveBtn}
                           </button>
                         </div>
-                        ${mailConfigSaving ? html`<p className="mt-3 text-sm text-brand-600">${t.loading}</p>` : null}
+                        ${mailConfigSaving || mailConfigTesting
+                          ? html`<p className="mt-3 text-sm text-brand-600">${t.loading}</p>`
+                          : null}
                       </div>
                     `}
               </section>
