@@ -137,7 +137,7 @@ class BuyerMessage(Base):
             "tenant_id",
             "store_id",
             "conversation_id",
-            "buyer_message",
+            "buyer_message_hash",
             name="uq_buyer_messages_scope_conversation_message",
         ),
     )
@@ -148,6 +148,7 @@ class BuyerMessage(Base):
 
     conversation_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     buyer_message: Mapped[str] = mapped_column(Text, nullable=False)
+    buyer_message_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
 
     category: Mapped[str | None] = mapped_column(String(64), nullable=True)
     sentiment: Mapped[str | None] = mapped_column(String(32), nullable=True)
