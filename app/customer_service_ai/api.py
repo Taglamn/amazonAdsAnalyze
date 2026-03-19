@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from email.utils import parseaddr
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -15,8 +16,10 @@ from .auto_reply_engine import AutoReplyEngine
 from .db import MessageStatus
 from .human_review import HumanReviewEngine
 from .llm import CustomerServiceLLM, LLMGenerationError
+from .mail_client import MailClientError, get_email_by_message_id
 from .message_classification import MessageClassificationService
 from .message_send import MessageSendService
+from .message_meta_store import message_meta_store
 from .message_storage import MessageStorageService
 from .message_sync import MessageSyncService
 from .reply_generation import ReplyGenerationService
@@ -48,7 +51,6 @@ from .service import (
     send_approved_reply,
     update_final_reply,
 )
-from .sp_api import LingxingBoundStore, LingxingMessagingClient, MessagingAPIError
 from .tasks import fetch_buyer_messages_task, process_message_task, send_approved_reply_task
 
 router = APIRouter(prefix="/api/customer-service", tags=["customer-service"])
@@ -59,12 +61,6 @@ ReadRoleDependency = Depends(
     require_roles(RoleName.ADMIN, RoleName.MANAGER, RoleName.STAFF, RoleName.VIEWER)
 )
 WriteRoleDependency = Depends(require_roles(RoleName.ADMIN, RoleName.MANAGER, RoleName.STAFF))
-
-
-def _build_message_client() -> LingxingMessagingClient:
-    """Build Lingxing messaging client using environment credentials."""
-
-    return LingxingMessagingClient()
 
 
 def _resolve_scoped_store(
@@ -100,43 +96,6 @@ def _resolve_scoped_store(
     return store.store_id
 
 
-def _resolve_target_fetch_store(
-    *,
-    db: Session,
-    current_user: User,
-    external_store_id: str,
-    client: LingxingMessagingClient,
-) -> tuple[LingxingBoundStore, int]:
-    """Resolve exactly one target store for message sync."""
-
-    selector = external_store_id.strip()
-    if selector in {"all", "__all__", "*"}:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Please pass a concrete store_id from the current store selector",
-        )
-
-    bound_stores = client.list_bound_stores()
-    selected = [
-        item
-        for item in bound_stores
-        if item.external_store_id == selector or item.store_name == selector
-    ]
-    if not selected:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Lingxing store not found: {selector}",
-        )
-
-    target = selected[0]
-    internal_store_id = _resolve_scoped_store(
-        db,
-        current_user=current_user,
-        external_store_id=target.external_store_id,
-    )
-    return target, internal_store_id
-
-
 @router.post("/stores/{external_store_id}/messages/fetch", response_model=TaskQueuedResponse | InlineFetchResponse)
 def fetch_messages(
     external_store_id: str,
@@ -144,16 +103,14 @@ def fetch_messages(
     current_user: User = WriteRoleDependency,
     db: Session = Depends(get_db_session),
 ):
-    """Fetch buyer messages from Lingxing API for one authorized store."""
+    """Fetch buyer messages from mailbox (IMAP) for one authorized store."""
 
     auto_process = payload.auto_process if payload.auto_generate is None else payload.auto_generate
     try:
-        client = _build_message_client()
-        target_store, internal_store_id = _resolve_target_fetch_store(
+        internal_store_id = _resolve_scoped_store(
             db=db,
             current_user=current_user,
             external_store_id=external_store_id,
-            client=client,
         )
         if payload.async_mode:
             task = fetch_buyer_messages_task.delay(
@@ -167,14 +124,13 @@ def fetch_messages(
             db=db,
             tenant_id=current_user.tenant_id,
             store_id=internal_store_id,
-            sync_service=MessageSyncService(
-                client=client,
-                store_name=target_store.store_name,
-                sid=target_store.sid,
-                email=target_store.email,
-                external_store_id=target_store.external_store_id,
-            ),
+            sync_service=MessageSyncService(),
             storage_service=MessageStorageService(),
+        )
+        message_meta_store.upsert_incoming_messages(
+            tenant_id=current_user.tenant_id,
+            store_id=internal_store_id,
+            incoming_messages=result.incoming_messages,
         )
         fetched_count = result.fetched_count
         created_count = result.created_count
@@ -195,14 +151,12 @@ def fetch_messages(
                     store_id=internal_store_id,
                 )
                 analysis_text: str | None = None
-                try:
-                    analysis_text = build_message_analysis_text(
-                        message=message,
-                        client=client,
-                        target_store=target_store,
-                    )
-                except MessagingAPIError:
-                    analysis_text = None
+                detail = message_meta_store.get_message_detail(
+                    tenant_id=current_user.tenant_id,
+                    store_id=internal_store_id,
+                    conversation_id=message.conversation_id,
+                )
+                analysis_text = build_message_analysis_text(message=message, detail=detail)
                 process_message_pipeline(
                     db=db,
                     message_id=message_id,
@@ -217,9 +171,8 @@ def fetch_messages(
                     auto_reply_engine=AutoReplyEngine(),
                     human_review_engine=HumanReviewEngine(),
                     send_service=MessageSendService(
-                        client=client,
-                        store_name=target_store.store_name,
-                        sid=target_store.sid,
+                        tenant_id=current_user.tenant_id,
+                        store_id=internal_store_id,
                     ),
                     force_regenerate=False,
                     allow_auto_send=True,
@@ -232,7 +185,7 @@ def fetch_messages(
             created_count=created_count,
             processed_count=processed_count,
         )
-    except (MessagingAPIError, LLMGenerationError, ValueError) as exc:
+    except (MailClientError, LLMGenerationError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("customer_service_fetch_messages_unexpected_error store=%s", external_store_id)
@@ -279,7 +232,7 @@ def get_message_detail(
     current_user: User = ReadRoleDependency,
     db: Session = Depends(get_db_session),
 ):
-    """Fetch Lingxing mail detail for one scoped message (expand on demand)."""
+    """Fetch cached/IMAP mail detail for one scoped message (expand on demand)."""
 
     internal_store_id = _resolve_scoped_store(
         db,
@@ -294,32 +247,41 @@ def get_message_detail(
             tenant_id=current_user.tenant_id,
             store_id=internal_store_id,
         )
-        client = _build_message_client()
-        target_store = client.resolve_store(external_store_id=external_store_id)
-        detail = client.fetch_message_detail(
-            webmail_uuid=message.conversation_id,
-            store_name=target_store.store_name,
-            sid=target_store.sid,
-            email=target_store.email,
-            external_store_id=target_store.external_store_id,
+        detail = message_meta_store.get_message_detail(
+            tenant_id=current_user.tenant_id,
+            store_id=internal_store_id,
+            conversation_id=message.conversation_id,
         )
-    except MessagingAPIError as exc:
+        if detail is None:
+            detail = get_email_by_message_id(message.conversation_id)
+            if detail:
+                message_meta_store.upsert_message_detail(
+                    tenant_id=current_user.tenant_id,
+                    store_id=internal_store_id,
+                    conversation_id=message.conversation_id,
+                    detail=detail,
+                )
+    except (MailClientError, RuntimeError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except MessageNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
+    detail = detail or {}
     attachments = detail.get("attachments")
     if not isinstance(attachments, list):
         attachments = []
+    from_raw = str(detail.get("from") or detail.get("from_address") or "").strip()
+    from_name, from_address = parseaddr(from_raw)
+    to_raw = str(detail.get("to") or detail.get("to_address_all") or "").strip()
     return MailDetailResponse(
         message_id=message.id,
         conversation_id=message.conversation_id,
         subject=str(detail.get("subject") or "") or None,
         text_html=str(detail.get("text_html") or "") or None,
-        text_plain=str(detail.get("text_plain") or "") or None,
-        from_name=str(detail.get("from_name") or "") or None,
-        from_address=str(detail.get("from_address") or "") or None,
-        to_address_all=str(detail.get("to_address_all") or "") or None,
+        text_plain=str(detail.get("text_plain") or detail.get("body") or "") or None,
+        from_name=from_name or (str(detail.get("from_name") or "") or None),
+        from_address=from_address or (str(detail.get("from_address") or "") or None),
+        to_address_all=to_raw or None,
         cc=str(detail.get("cc") or "") or None,
         bcc=str(detail.get("bcc") or "") or None,
         date=str(detail.get("date") or "") or None,
@@ -355,23 +317,18 @@ def process_message(
         return TaskQueuedResponse(task_id=task.id)
 
     try:
-        client = _build_message_client()
-        target_store = client.resolve_store(external_store_id=external_store_id)
         scoped_message = get_message(
             db,
             message_id=message_id,
             tenant_id=current_user.tenant_id,
             store_id=internal_store_id,
         )
-        analysis_text: str | None = None
-        try:
-            analysis_text = build_message_analysis_text(
-                message=scoped_message,
-                client=client,
-                target_store=target_store,
-            )
-        except MessagingAPIError:
-            analysis_text = None
+        detail = message_meta_store.get_message_detail(
+            tenant_id=current_user.tenant_id,
+            store_id=internal_store_id,
+            conversation_id=scoped_message.conversation_id,
+        )
+        analysis_text = build_message_analysis_text(message=scoped_message, detail=detail)
         result = process_message_pipeline(
             db=db,
             message_id=message_id,
@@ -386,15 +343,14 @@ def process_message(
             auto_reply_engine=AutoReplyEngine(),
             human_review_engine=HumanReviewEngine(),
             send_service=MessageSendService(
-                client=client,
-                store_name=target_store.store_name,
-                sid=target_store.sid,
+                tenant_id=current_user.tenant_id,
+                store_id=internal_store_id,
             ),
             force_regenerate=payload.force_regenerate,
             allow_auto_send=payload.allow_auto_send,
             analysis_text=analysis_text,
         )
-    except MessagingAPIError as exc:
+    except (MailClientError, RuntimeError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except LLMGenerationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -506,7 +462,7 @@ def send_message(
     current_user: User = WriteRoleDependency,
     db: Session = Depends(get_db_session),
 ):
-    """Send approved reply for scoped message via Lingxing API."""
+    """Send approved reply for scoped message via SMTP channel."""
 
     internal_store_id = _resolve_scoped_store(
         db,
@@ -514,12 +470,13 @@ def send_message(
         external_store_id=external_store_id,
     )
 
+    if payload.attachments:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Attachments are not supported in SMTP mode",
+        )
+
     if payload.async_mode:
-        if payload.attachments:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Attachments are only supported in sync send mode",
-            )
         task = send_approved_reply_task.delay(
             tenant_id=current_user.tenant_id,
             store_id=internal_store_id,
@@ -528,8 +485,6 @@ def send_message(
         return TaskQueuedResponse(task_id=task.id)
 
     try:
-        client = _build_message_client()
-        target_store = client.resolve_store(external_store_id=external_store_id)
         message, sp_result = send_approved_reply(
             db=db,
             message_id=message_id,
@@ -537,12 +492,11 @@ def send_message(
             store_id=internal_store_id,
             attachments=[item.model_dump() for item in payload.attachments],
             send_service=MessageSendService(
-                client=client,
-                store_name=target_store.store_name,
-                sid=target_store.sid,
+                tenant_id=current_user.tenant_id,
+                store_id=internal_store_id,
             ),
         )
-    except MessagingAPIError as exc:
+    except (MailClientError, RuntimeError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except MessageNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -564,7 +518,7 @@ def approve_and_send_message(
     current_user: User = WriteRoleDependency,
     db: Session = Depends(get_db_session),
 ):
-    """Convenience endpoint: approve AI reply then send through Lingxing API."""
+    """Convenience endpoint: approve AI reply then send through SMTP channel."""
 
     payload = payload or SendReplyRequest(async_mode=False)
     _ = approve_message(

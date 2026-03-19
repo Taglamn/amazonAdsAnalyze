@@ -6,7 +6,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from .db import BuyerMessage, MessageStatus
-from .sp_api import IncomingBuyerMessage
+from .message_types import IncomingBuyerMessage
 
 
 @dataclass(frozen=True)
@@ -14,6 +14,7 @@ class StoreMessagesResult:
     fetched_count: int
     created_count: int
     new_message_ids: list[int]
+    incoming_messages: list[IncomingBuyerMessage]
 
 
 class MessageStorageService:
@@ -47,6 +48,7 @@ class MessageStorageService:
             fetched_count=len(incoming),
             created_count=created_count,
             new_message_ids=new_message_ids,
+            incoming_messages=incoming,
         )
 
     def _get_or_create_message(

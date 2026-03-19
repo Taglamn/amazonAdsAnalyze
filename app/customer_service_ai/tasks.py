@@ -2,14 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.auth.models import Store
-
 from .analysis_context import build_message_analysis_text
 from .auto_reply_engine import AutoReplyEngine
 from .db import MessageStatus, SessionLocal, init_customer_service_schema
 from .human_review import HumanReviewEngine
 from .llm import CustomerServiceLLM
 from .message_classification import MessageClassificationService
+from .message_meta_store import message_meta_store
 from .message_send import MessageSendService
 from .message_storage import MessageStorageService
 from .message_sync import MessageSyncService
@@ -24,7 +23,6 @@ from .service import (
     process_message_pipeline,
     send_approved_reply,
 )
-from .sp_api import LingxingMessagingClient, MessagingAPIError
 
 
 @celery_app.task(name="customer_service.fetch_buyer_messages")
@@ -38,18 +36,7 @@ def fetch_buyer_messages_task(
     init_customer_service_schema()
     db = SessionLocal()
     try:
-        client = LingxingMessagingClient()
-        store = db.get(Store, store_id)
-        if store is None:
-            raise RuntimeError(f"Store {store_id} not found")
-        target_store = client.resolve_store(external_store_id=store.external_store_id)
-        sync_service = MessageSyncService(
-            client=client,
-            store_name=target_store.store_name,
-            sid=target_store.sid,
-            email=target_store.email,
-            external_store_id=target_store.external_store_id,
-        )
+        sync_service = MessageSyncService()
         storage_service = MessageStorageService()
         result = fetch_and_store_messages(
             db=db,
@@ -57,6 +44,11 @@ def fetch_buyer_messages_task(
             store_id=store_id,
             sync_service=sync_service,
             storage_service=storage_service,
+        )
+        message_meta_store.upsert_incoming_messages(
+            tenant_id=tenant_id,
+            store_id=store_id,
+            incoming_messages=result.incoming_messages,
         )
 
         processed = 0
@@ -99,11 +91,6 @@ def process_message_task(
     init_customer_service_schema()
     db = SessionLocal()
     try:
-        client = LingxingMessagingClient()
-        store = db.get(Store, store_id)
-        if store is None:
-            raise RuntimeError(f"Store {store_id} not found")
-        target_store = client.resolve_store(external_store_id=store.external_store_id)
         scoped_message = get_message(
             db,
             message_id=message_id,
@@ -112,14 +99,12 @@ def process_message_task(
         )
         analysis_text: str | None = None
         if scoped_message.status not in {MessageStatus.SENT.value, MessageStatus.AUTO_SENT.value}:
-            try:
-                analysis_text = build_message_analysis_text(
-                    message=scoped_message,
-                    client=client,
-                    target_store=target_store,
-                )
-            except MessagingAPIError:
-                analysis_text = None
+            detail = message_meta_store.get_message_detail(
+                tenant_id=tenant_id,
+                store_id=store_id,
+                conversation_id=scoped_message.conversation_id,
+            )
+            analysis_text = build_message_analysis_text(message=scoped_message, detail=detail)
         result = process_message_pipeline(
             db=db,
             message_id=message_id,
@@ -134,9 +119,8 @@ def process_message_task(
             auto_reply_engine=AutoReplyEngine(),
             human_review_engine=HumanReviewEngine(),
             send_service=MessageSendService(
-                client=client,
-                store_name=target_store.store_name,
-                sid=target_store.sid,
+                tenant_id=tenant_id,
+                store_id=store_id,
             ),
             force_regenerate=force_regenerate,
             allow_auto_send=allow_auto_send,
@@ -167,20 +151,14 @@ def send_approved_reply_task(tenant_id: int, store_id: int, message_id: int) -> 
     init_customer_service_schema()
     db = SessionLocal()
     try:
-        client = LingxingMessagingClient()
-        store = db.get(Store, store_id)
-        if store is None:
-            raise RuntimeError(f"Store {store_id} not found")
-        target_store = client.resolve_store(external_store_id=store.external_store_id)
         message, sp_result = send_approved_reply(
             db=db,
             message_id=message_id,
             tenant_id=tenant_id,
             store_id=store_id,
             send_service=MessageSendService(
-                client=client,
-                store_name=target_store.store_name,
-                sid=target_store.sid,
+                tenant_id=tenant_id,
+                store_id=store_id,
             ),
         )
         return {

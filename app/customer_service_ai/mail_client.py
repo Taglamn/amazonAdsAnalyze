@@ -81,8 +81,17 @@ def parse_email(raw_email: bytes | str) -> dict[str, Any]:
         "subject": _decode_header_value(message.get("Subject")),
         "from": _decode_header_value(message.get("From")),
         "reply_to": _decode_header_value(message.get("Reply-To")),
+        "reply-to": _decode_header_value(message.get("Reply-To")),
         "message_id": _decode_header_value(message.get("Message-ID")),
+        "message-id": _decode_header_value(message.get("Message-ID")),
+        "to": _decode_header_value(message.get("To")),
+        "cc": _decode_header_value(message.get("Cc")),
+        "bcc": _decode_header_value(message.get("Bcc")),
+        "date": _decode_header_value(message.get("Date")),
         "body": _extract_plain_text_body(message),
+        "text_plain": _extract_plain_text_body(message),
+        "text_html": _extract_html_body(message),
+        "attachments": _extract_attachments(message),
         "headers": headers,
     }
 
@@ -109,16 +118,66 @@ def get_unread_emails() -> list[dict[str, Any]]:
                 fetch_status, payload = client.fetch(message_id, "(BODY.PEEK[])")
                 if fetch_status != "OK":
                     continue
+                parsed_ok = False
                 for part in payload:
                     if isinstance(part, tuple) and len(part) > 1:
                         records.append(parse_email(part[1]))
+                        parsed_ok = True
                         break
+                if parsed_ok:
+                    try:
+                        client.store(message_id, "+FLAGS", "\\Seen")
+                    except Exception:
+                        # Mark-as-seen failures should not block ingestion.
+                        pass
     except imaplib.IMAP4.error as exc:
         raise MailClientError(f"IMAP operation failed: {exc}") from exc
     except OSError as exc:
         raise MailClientError(f"IMAP network error: {exc}") from exc
 
     return records
+
+
+def get_email_by_message_id(message_id: str) -> dict[str, Any] | None:
+    """Fetch one email from mailbox using Message-ID header lookup."""
+
+    settings = load_mail_transport_settings()
+    needle = str(message_id or "").strip()
+    if not needle:
+        return None
+
+    candidates = [needle]
+    if needle.startswith("<") and needle.endswith(">"):
+        candidates.append(needle[1:-1])
+    else:
+        candidates.append(f"<{needle}>")
+
+    try:
+        with imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port) as client:
+            client.login(settings.username, settings.password)
+            status, _ = client.select(settings.imap_mailbox)
+            if status != "OK":
+                raise MailClientError(f"Failed to select mailbox: {settings.imap_mailbox}")
+
+            for candidate in candidates:
+                search_status, data = client.search(None, "HEADER", "Message-ID", candidate)
+                if search_status != "OK":
+                    continue
+                ids = data[0].split() if data and data[0] else []
+                if not ids:
+                    continue
+                fetch_status, payload = client.fetch(ids[-1], "(BODY.PEEK[])")
+                if fetch_status != "OK":
+                    continue
+                for part in payload:
+                    if isinstance(part, tuple) and len(part) > 1:
+                        return parse_email(part[1])
+    except imaplib.IMAP4.error as exc:
+        raise MailClientError(f"IMAP operation failed: {exc}") from exc
+    except OSError as exc:
+        raise MailClientError(f"IMAP network error: {exc}") from exc
+
+    return None
 
 
 def send_email(
@@ -230,6 +289,44 @@ def _extract_plain_text_body(message: Message) -> str:
     if html_parts:
         return _html_to_text("\n".join(html_parts))
     return ""
+
+
+def _extract_html_body(message: Message) -> str:
+    html_parts: list[str] = []
+    if message.is_multipart():
+        for part in message.walk():
+            disposition = str(part.get_content_disposition() or "").lower()
+            if disposition == "attachment":
+                continue
+            content_type = str(part.get_content_type() or "").lower()
+            if content_type == "text/html":
+                text = _extract_part_text(part)
+                if text:
+                    html_parts.append(text)
+    else:
+        if str(message.get_content_type() or "").lower() == "text/html":
+            text = _extract_part_text(message)
+            if text:
+                html_parts.append(text)
+    return "\n".join(item.strip() for item in html_parts if item.strip()).strip()
+
+
+def _extract_attachments(message: Message) -> list[dict[str, Any]]:
+    attachments: list[dict[str, Any]] = []
+    for part in message.walk():
+        disposition = str(part.get_content_disposition() or "").lower()
+        if disposition != "attachment":
+            continue
+        filename = _decode_header_value(part.get_filename())
+        payload = part.get_payload(decode=True) or b""
+        attachments.append(
+            {
+                "name": filename,
+                "content_type": str(part.get_content_type() or ""),
+                "size": len(payload),
+            }
+        )
+    return attachments
 
 
 def _extract_part_text(part: Message) -> str:

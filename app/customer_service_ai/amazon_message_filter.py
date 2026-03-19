@@ -51,14 +51,19 @@ def filter_amazon_messages(
     for item in email_list:
         sender = _to_text(item.get("from"))
         subject = _to_text(item.get("subject"))
-        reply_to = _to_text(item.get("reply_to"))
+        reply_to = _to_text(item.get("reply_to")) or _to_text(item.get("reply-to"))
         body = _to_text(item.get("body"))
         headers = _normalize_headers(item.get("headers"), fallback_item=item)
-        message_id = _to_text(item.get("message_id")) or _lookup_header(headers, "message-id")
+        message_id = (
+            _to_text(item.get("message_id"))
+            or _to_text(item.get("message-id"))
+            or _lookup_header(headers, "message-id")
+        )
 
         reject_reason = _reject_reason(
             sender=sender,
             subject=subject,
+            message_id=message_id,
             headers=headers,
             blocked=blocked,
         )
@@ -76,8 +81,12 @@ def filter_amazon_messages(
         normalized = {
             "subject": subject,
             "buyer_email": _extract_email_or_raw(reply_to),
+            "from": sender,
+            "reply_to": reply_to,
             "message_id": message_id,
             "clean_body": clean_body,
+            "body": body,
+            "headers": headers,
         }
         if buyer_message_id:
             normalized["buyer_message_id"] = buyer_message_id
@@ -90,6 +99,7 @@ def _reject_reason(
     *,
     sender: str,
     subject: str,
+    message_id: str,
     headers: dict[str, str],
     blocked: AmazonFilterBlacklist,
 ) -> str:
@@ -109,6 +119,8 @@ def _reject_reason(
         return "subject_not_buyer_seller"
     if not _has_amazon_header(headers):
         return "missing_amazon_header"
+    if not _to_text(message_id):
+        return "missing_message_id"
     return ""
 
 
