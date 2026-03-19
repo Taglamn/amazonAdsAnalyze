@@ -101,37 +101,40 @@ def get_unread_emails_with_settings(settings: MailTransportSettings) -> list[dic
     """Fetch unread emails using explicit transport settings."""
 
     records: list[dict[str, Any]] = []
+    client: imaplib.IMAP4_SSL | None = None
     try:
-        with imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port) as client:
-            client.login(settings.username, settings.password)
-            status, _ = client.select(settings.imap_mailbox)
-            if status != "OK":
-                raise MailClientError(f"Failed to select mailbox: {settings.imap_mailbox}")
+        client = imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port)
+        client.login(settings.username, settings.password)
+        status, _ = client.select(settings.imap_mailbox)
+        if status != "OK":
+            raise MailClientError(f"Failed to select mailbox: {settings.imap_mailbox}")
 
-            status, data = client.search(None, "UNSEEN")
-            if status != "OK":
-                raise MailClientError("Failed to search unread emails.")
+        status, data = client.search(None, "UNSEEN")
+        if status != "OK":
+            raise MailClientError("Failed to search unread emails.")
 
-            message_ids = data[0].split() if data and data[0] else []
-            for message_id in message_ids:
-                fetch_status, payload = client.fetch(message_id, "(BODY.PEEK[])")
-                if fetch_status != "OK":
-                    continue
-                parsed_ok = False
-                for part in payload:
-                    if isinstance(part, tuple) and len(part) > 1:
-                        records.append(parse_email(part[1]))
-                        parsed_ok = True
-                        break
-                if parsed_ok:
-                    try:
-                        client.store(message_id, "+FLAGS", "\\Seen")
-                    except Exception:
-                        pass
+        message_ids = data[0].split() if data and data[0] else []
+        for message_id in message_ids:
+            fetch_status, payload = client.fetch(message_id, "(BODY.PEEK[])")
+            if fetch_status != "OK":
+                continue
+            parsed_ok = False
+            for part in payload:
+                if isinstance(part, tuple) and len(part) > 1:
+                    records.append(parse_email(part[1]))
+                    parsed_ok = True
+                    break
+            if parsed_ok:
+                try:
+                    client.store(message_id, "+FLAGS", "\\Seen")
+                except Exception:
+                    pass
     except imaplib.IMAP4.error as exc:
         raise MailClientError(f"IMAP operation failed: {exc}") from exc
     except OSError as exc:
         raise MailClientError(f"IMAP network error: {exc}") from exc
+    finally:
+        _safe_imap_logout(client)
     return records
 
 
@@ -145,16 +148,19 @@ def get_unread_emails(settings: MailTransportSettings | None = None) -> list[dic
 def test_mail_server_login(settings: MailTransportSettings) -> dict[str, Any]:
     """Test IMAP/SMTP login flow with provided transport settings."""
 
+    client: imaplib.IMAP4_SSL | None = None
     try:
-        with imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port) as client:
-            client.login(settings.username, settings.password)
-            status, _ = client.select(settings.imap_mailbox)
-            if status != "OK":
-                raise MailClientError(f"Failed to select mailbox: {settings.imap_mailbox}")
+        client = imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port)
+        client.login(settings.username, settings.password)
+        status, _ = client.select(settings.imap_mailbox)
+        if status != "OK":
+            raise MailClientError(f"Failed to select mailbox: {settings.imap_mailbox}")
     except imaplib.IMAP4.error as exc:
         raise MailClientError(f"IMAP login test failed: {exc}") from exc
     except OSError as exc:
         raise MailClientError(f"IMAP network test failed: {exc}") from exc
+    finally:
+        _safe_imap_logout(client)
 
     _smtp_test_login_with_fallback(settings)
 
@@ -179,30 +185,33 @@ def get_email_by_message_id(message_id: str, settings: MailTransportSettings | N
     else:
         candidates.append(f"<{needle}>")
 
+    client: imaplib.IMAP4_SSL | None = None
     try:
-        with imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port) as client:
-            client.login(settings.username, settings.password)
-            status, _ = client.select(settings.imap_mailbox)
-            if status != "OK":
-                raise MailClientError(f"Failed to select mailbox: {settings.imap_mailbox}")
+        client = imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port)
+        client.login(settings.username, settings.password)
+        status, _ = client.select(settings.imap_mailbox)
+        if status != "OK":
+            raise MailClientError(f"Failed to select mailbox: {settings.imap_mailbox}")
 
-            for candidate in candidates:
-                search_status, data = client.search(None, "HEADER", "Message-ID", candidate)
-                if search_status != "OK":
-                    continue
-                ids = data[0].split() if data and data[0] else []
-                if not ids:
-                    continue
-                fetch_status, payload = client.fetch(ids[-1], "(BODY.PEEK[])")
-                if fetch_status != "OK":
-                    continue
-                for part in payload:
-                    if isinstance(part, tuple) and len(part) > 1:
-                        return parse_email(part[1])
+        for candidate in candidates:
+            search_status, data = client.search(None, "HEADER", "Message-ID", candidate)
+            if search_status != "OK":
+                continue
+            ids = data[0].split() if data and data[0] else []
+            if not ids:
+                continue
+            fetch_status, payload = client.fetch(ids[-1], "(BODY.PEEK[])")
+            if fetch_status != "OK":
+                continue
+            for part in payload:
+                if isinstance(part, tuple) and len(part) > 1:
+                    return parse_email(part[1])
     except imaplib.IMAP4.error as exc:
         raise MailClientError(f"IMAP operation failed: {exc}") from exc
     except OSError as exc:
         raise MailClientError(f"IMAP network error: {exc}") from exc
+    finally:
+        _safe_imap_logout(client)
 
     return None
 
@@ -371,6 +380,17 @@ def _smtp_send_once(
         raise MailClientError(str(exc)) from exc
     except OSError as exc:
         raise MailClientError(str(exc)) from exc
+
+
+def _safe_imap_logout(client: imaplib.IMAP4_SSL | None) -> None:
+    if client is None:
+        return
+    try:
+        client.logout()
+    except Exception:
+        # Some servers close TCP directly and cause EOF on LOGOUT.
+        # Treat this as non-fatal because IMAP operations already succeeded.
+        pass
 
 
 def _parse_raw_message(raw_email: bytes | str) -> Message:
